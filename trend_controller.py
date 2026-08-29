@@ -264,10 +264,9 @@ class TrendController:
             # Trend reports always use Friday for weekly maintenance.
             friday_index = WEEKDAY_INDEX["Friday"]
             return sum(
-                day == friday_index
+                1
                 for week in calendar.monthcalendar(self.year, month_number)
-                for day in week
-                if day
+                if week[friday_index] != 0
             )
         if frequency == "2Y" and not self._two_yearly_due(last_two_year_done):
             return 0
