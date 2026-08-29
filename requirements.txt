@@ -1,0 +1,5 @@
+python-docx
+docxcompose
+pandas
+openpyxl
+Pillow
