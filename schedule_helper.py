@@ -228,14 +228,58 @@ class ScheduleHelper:
                         sign_placeholder
                     ] = "N/A"   
     # ----------------------------------------------------------
+    # Safe Value Parsing
+    #
+    # Equipment.xlsx uses "-" (and sometimes blank cells) to mean
+    # "not set" / "never done". int("-") used to crash the whole
+    # generator. These helpers parse safely instead.
+    # ----------------------------------------------------------
+
+    @staticmethod
+    def _safe_maintenance_date(value):
+
+        text = str(value).strip()
+
+        try:
+
+            return f"{int(float(text)):02d}"
+
+        except (TypeError, ValueError):
+
+            # No usable maintenance date on file (e.g. "-").
+            # Fall back to day "01" instead of crashing.
+            return "01"
+
+    @staticmethod
+    def _safe_year(value):
+
+        text = str(value).strip()
+
+        if text in ("", "-"):
+
+            return None
+
+        try:
+
+            return int(float(text))
+
+        except (TypeError, ValueError):
+
+            return None
+
+    # ----------------------------------------------------------
     # Monthly / Quarterly / Half Yearly / Yearly / Two Yearly
     # ----------------------------------------------------------
 
     def build_frequencies(self):
 
-        maintenance_date = f"{int(self.row['Maintenance Date']):02d}"
+        maintenance_date = self._safe_maintenance_date(
+            self.row["Maintenance Date"]
+        )
 
-        last_2y = int(self.row["Last 2Y Done"])
+        last_2y = self._safe_year(
+            self.row["Last 2Y Done"]
+        )
 
         months = self.QUARTERS[self.quarter]
 
@@ -389,7 +433,7 @@ class ScheduleHelper:
             # Two Yearly
             # ----------------------------------------
 
-            due = (self.year - last_2y) >= 2
+            due = last_2y is None or (self.year - last_2y) >= 2
 
             if "2Y" in tokens and due:
 
