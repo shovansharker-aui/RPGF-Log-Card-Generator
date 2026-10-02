@@ -9,3 +9,5 @@ dist/
 .idea/
 
 *.log
+# Personal templates / equipment lists
+templates/
