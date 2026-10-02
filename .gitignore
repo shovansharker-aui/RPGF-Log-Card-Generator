@@ -10,4 +10,6 @@ dist/
 
 *.log
 # Personal templates / equipment lists
-templates/
+templates/*
+!templates/Template_Log_Card.docx
+!templates/Template_Trend_Analysis.xlsx
