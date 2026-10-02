@@ -551,11 +551,13 @@ class MainWindow:
 
             success = controller.run()
 
+            six_year_due = list(controller.six_year_due)
+
             self.root.after(
 
                 0,
 
-                lambda: self.finish_generation(success)
+                lambda: self.finish_generation(success, six_year_due)
 
             )
 
@@ -573,7 +575,7 @@ class MainWindow:
     # Finish Generation
     # ==========================================================
 
-    def finish_generation(self, success):
+    def finish_generation(self, success, six_year_due=()):
 
         self.progress.stop()
 
@@ -612,6 +614,18 @@ class MainWindow:
                 "Finished",
 
                 "No equipment requires maintenance."
+
+            )
+
+        if six_year_due:
+
+            messagebox.showwarning(
+
+                "6Y Maintenance Due",
+
+                f"{', '.join(six_year_due)} "
+
+                "has 6Y maintenance, do it manually."
 
             )
 

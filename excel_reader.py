@@ -19,9 +19,7 @@ class ExcelReader:
 
         "Location",
 
-        "Maintenance Date",
-
-        "Last 2Y Done"
+        "Maintenance Date"
 
     ]
 
@@ -65,6 +63,15 @@ class ExcelReader:
 
                 "Workbook has not been loaded."
 
+            )
+
+        if not any(
+            column in self.df.columns
+            for column in ("Last 2Y/6Y Done", "Last 2Y Done")
+        ):
+
+            raise ValueError(
+                "Missing required columns:\nLast 2Y/6Y Done"
             )
 
         missing = [

@@ -36,6 +36,9 @@ class Controller:
 
         self.logger = Logger()
 
+        # "Equipment Name - Equipment No." entries with 6Y maintenance due
+        self.six_year_due = []
+
     # ==========================================================
     # Main
     # ==========================================================
@@ -64,6 +67,8 @@ class Controller:
 
             )
 
+            self.six_year_due = []
+
             composer = None
 
             first_document = True
@@ -89,6 +94,12 @@ class Controller:
                     weekday=self.weekday
 
                 )
+
+                if schedule.has_six_year_due():
+
+                    self.six_year_due.append(
+                        f"{row['Equipment Name']} - {row['Equipment No.']}"
+                    )
 
                 if not schedule.has_maintenance():
 

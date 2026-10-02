@@ -20,8 +20,9 @@ WEEKDAY_INDEX = {
     "Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3,
     "Friday": 4, "Saturday": 5, "Sunday": 6,
 }
-FREQUENCY_COLUMNS = {"W": (2, 3), "M": (4, 5), "3M": (6, 7), "6M": (8, 9), "Y": (10, 11), "2Y": (12, 13)}
-REQUIRED_COLUMNS = {"Equipment No.", "Maintenance Date", "Last 2Y Done", *MONTHS}
+FREQUENCY_COLUMNS = {"W": (2, 3), "M": (4, 5), "3M": (6, 7), "6M": (8, 9), "Y": (10, 11), "2Y": (12, 13), "6Y": (14, 15)}
+REQUIRED_COLUMNS = {"Equipment No.", "Maintenance Date", *MONTHS}
+LAST_DONE_COLUMNS = ("Last 2Y/6Y Done", "Last 2Y Done")
 
 
 class TrendController:
@@ -64,8 +65,14 @@ class TrendController:
             data = pd.read_excel(self.excel_file, sheet_name=sheet_name).fillna("")
             data.columns = data.columns.astype(str).str.strip()
             missing = REQUIRED_COLUMNS - set(data.columns)
+            if not any(column in data.columns for column in LAST_DONE_COLUMNS):
+                missing.add("Last 2Y/6Y Done")
             if missing:
                 raise ValueError(f"Sheet '{sheet_name}' is missing: {', '.join(sorted(missing))}")
+            for column in LAST_DONE_COLUMNS:
+                if column in data.columns:
+                    data["Last Long Done"] = data[column]
+                    break
             for _, row in data.iterrows():
                 equipment_id = str(row["Equipment No."]).strip()
                 if equipment_id:
@@ -237,7 +244,7 @@ class TrendController:
 
         tokens = self._tokens(equipment[month])
         for frequency, (scheduled_column, executed_column) in FREQUENCY_COLUMNS.items():
-            value = self._scheduled_count(frequency, month, tokens, equipment["Last 2Y Done"])
+            value = self._scheduled_count(frequency, month, tokens, equipment["Last Long Done"])
             sheet.cell(row_number, scheduled_column, value)
             sheet.cell(row_number, executed_column, value)
 
@@ -268,11 +275,12 @@ class TrendController:
                 for week in calendar.monthcalendar(self.year, month_number)
                 if week[friday_index] != 0
             )
-        if frequency == "2Y" and not self._two_yearly_due(last_two_year_done):
+        if frequency in ("2Y", "6Y") and not self._long_interval_due(
+                last_two_year_done, 2 if frequency == "2Y" else 6):
             return 0
         return 1
 
-    def _two_yearly_due(self, value):
+    def _long_interval_due(self, value, interval):
         if value in (None, "") or pd.isna(value):
             return True
         try:
@@ -282,4 +290,4 @@ class TrendController:
             if pd.isna(parsed):
                 return True
             year = parsed.year
-        return self.year - year >= 2
+        return self.year - year >= interval

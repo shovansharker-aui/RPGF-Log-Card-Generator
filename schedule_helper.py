@@ -92,6 +92,33 @@ class ScheduleHelper:
         return False
 
     # ----------------------------------------------------------
+    # Six Yearly maintenance (not on the log card, done manually)
+    # ----------------------------------------------------------
+
+    def has_six_year_due(self):
+
+        last_long = self._safe_year(
+            self._last_done_value(self.row)
+        )
+
+        if last_long is not None and (self.year - last_long) < 6:
+
+            return False
+
+        for month in self.QUARTERS[self.quarter]:
+
+            tokens = [
+                token.strip().upper()
+                for token in str(self.row[month]).split(",")
+            ]
+
+            if "6Y" in tokens:
+
+                return True
+
+        return False
+
+    # ----------------------------------------------------------
     # Equipment
     # ----------------------------------------------------------
 
@@ -236,19 +263,52 @@ class ScheduleHelper:
     # ----------------------------------------------------------
 
     @staticmethod
-    def _safe_maintenance_date(value):
-
-        text = str(value).strip()
+    def _parse_day(text):
 
         try:
 
-            return f"{int(float(text)):02d}"
+            return f"{int(float(text.strip())):02d}"
 
         except (TypeError, ValueError):
 
             # No usable maintenance date on file (e.g. "-").
             # Fall back to day "01" instead of crashing.
             return "01"
+
+    @classmethod
+    def _safe_maintenance_dates(cls, value):
+        """
+        Returns (monthly_day, other_day).
+
+        A cell like "25, 30" means 25 = monthly maintenance date and
+        30 = date for all other maintenances (3M, 6M, Y, 2Y, 6Y).
+        A single date applies to both.
+        """
+
+        parts = [
+            part for part in str(value).split(",") if part.strip()
+        ]
+
+        if not parts:
+
+            return "01", "01"
+
+        monthly = cls._parse_day(parts[0])
+
+        other = cls._parse_day(parts[1]) if len(parts) > 1 else monthly
+
+        return monthly, other
+
+    @staticmethod
+    def _last_done_value(row):
+
+        for column in ("Last 2Y/6Y Done", "Last 2Y Done"):
+
+            if column in row.index:
+
+                return row[column]
+
+        return ""
 
     @staticmethod
     def _safe_year(value):
@@ -273,12 +333,12 @@ class ScheduleHelper:
 
     def build_frequencies(self):
 
-        maintenance_date = self._safe_maintenance_date(
+        monthly_date, other_date = self._safe_maintenance_dates(
             self.row["Maintenance Date"]
         )
 
-        last_2y = self._safe_year(
-            self.row["Last 2Y Done"]
+        last_long = self._safe_year(
+            self._last_done_value(self.row)
         )
 
         months = self.QUARTERS[self.quarter]
@@ -341,7 +401,7 @@ class ScheduleHelper:
 
                 self.placeholders[
                     f"(M{month_index})"
-                ] = maintenance_date
+                ] = monthly_date
 
                 self.placeholders[
                     f"(dM{month_index})"
@@ -365,7 +425,7 @@ class ScheduleHelper:
 
                 self.placeholders[
                     f"(Q{month_index})"
-                ] = maintenance_date
+                ] = other_date
 
                 self.placeholders[
                     f"(dQ{month_index})"
@@ -389,7 +449,7 @@ class ScheduleHelper:
 
                 self.placeholders[
                     f"(H{month_index})"
-                ] = maintenance_date
+                ] = other_date
 
                 self.placeholders[
                     f"(dH{month_index})"
@@ -413,7 +473,7 @@ class ScheduleHelper:
 
                 self.placeholders[
                     f"(Y{month_index})"
-                ] = maintenance_date
+                ] = other_date
 
                 self.placeholders[
                     f"(dY{month_index})"
@@ -433,13 +493,15 @@ class ScheduleHelper:
             # Two Yearly
             # ----------------------------------------
 
-            due = last_2y is None or (self.year - last_2y) >= 2
+            # 6Y has no row on the log card; it is reported through
+            # has_six_year_due() so the user can do it manually.
+            due = last_long is None or (self.year - last_long) >= 2
 
             if "2Y" in tokens and due:
 
                 self.placeholders[
                     f"(T{month_index})"
-                ] = maintenance_date
+                ] = other_date
 
                 self.placeholders[
                     f"(dT{month_index})"
