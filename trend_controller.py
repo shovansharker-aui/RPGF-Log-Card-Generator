@@ -33,7 +33,7 @@ class TrendController:
         self.year = int(year)
         self.half = half
         self.weekday = weekday
-        self.template_file = Path(template_file or TEMPLATES_DIR / "Template.xlsx")
+        self.template_file = Path(template_file or TEMPLATES_DIR / "Template_Trend_Analysis.xlsx")
 
     def generate(self):
         self._validate_files()

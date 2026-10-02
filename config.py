@@ -55,7 +55,7 @@ SETTINGS_FILE = BASE_DIR / "settings.json"
 
 EQUIPMENT_FILE = DATA_DIR / "Equipment.xlsx"
 
-WORD_TEMPLATE = TEMPLATES_DIR / "Template.docx"
+WORD_TEMPLATE = TEMPLATES_DIR / "Template_Log_Card.docx"
 
 LOGO_FILE = ASSETS_DIR / "renata.png"
 
