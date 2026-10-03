@@ -33,6 +33,7 @@ exe = EXE(
     a.datas,
     [],
     name='RPGF Engineering Suite',
+    icon=['assets/renata.ico'],
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

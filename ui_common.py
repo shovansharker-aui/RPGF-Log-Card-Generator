@@ -23,6 +23,22 @@ def enable_high_dpi():
             pass
 
 
+def set_app_icon(root, icon_path):
+    """Replace Tk's default feather icon with the Renata logo."""
+
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "Renata.RPGF.EngineeringSuite"
+        )
+    except Exception:
+        pass
+
+    try:
+        root.iconbitmap(default=icon_path)
+    except Exception:
+        pass
+
+
 def init_scaling(root):
     """Sync Tk's point scaling with the real monitor DPI. Call after Tk()."""
 

@@ -11,7 +11,7 @@ from PIL import Image, ImageTk
 from due_gui import DueWindow
 from logcard_gui import MainWindow
 from trend_gui import TrendWindow
-from ui_common import enable_high_dpi, init_scaling, px
+from ui_common import enable_high_dpi, init_scaling, px, set_app_icon
 
 
 class Dashboard:
@@ -20,6 +20,7 @@ class Dashboard:
         enable_high_dpi()
         self.root = tk.Tk()
         init_scaling(self.root)
+        set_app_icon(self.root, self.resource_path("assets/renata.ico"))
         ttk.Style(self.root).theme_use("clam")
         self.root.title("RPGF Engineering Suite v2.0")
         self.root.configure(bg="#F4F7FB")
