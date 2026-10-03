@@ -27,7 +27,8 @@ LAST_DONE_COLUMNS = ("Last 2Y/6Y Done", "Last 2Y Done")
 
 class TrendController:
 
-    def __init__(self, excel_file, output_file, year, half, weekday, template_file=None):
+    def __init__(self, excel_file, output_file, year, half, weekday, template_file=None, progress=None):
+        self.progress = progress
         self.excel_file = Path(excel_file)
         self.output_file = Path(output_file)
         self.year = int(year)
@@ -37,18 +38,27 @@ class TrendController:
 
     def generate(self):
         self._validate_files()
+        self._report(0, 1, "Reading equipment workbook...")
         equipment = self._load_equipment()
         months = MONTHS[:6] if self.half == "Jan-Jun" else MONTHS[6:]
         workbook = load_workbook(self.template_file)
         self._prepare_month_sheets(workbook, months)
 
-        for month in months:
+        steps = len(months) + 2
+        for index, month in enumerate(months, start=1):
+            self._report(index, steps, f"Building {month} sheet...")
             sheet = workbook[month.upper()]
             self._fill_month_sheet(sheet, month, equipment)
 
+        self._report(steps - 1, steps, "Saving workbook...")
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
         workbook.save(self.output_file)
+        self._report(steps, steps, "Done")
         return self.output_file
+
+    def _report(self, current, total, message):
+        if self.progress:
+            self.progress(current, total, message)
 
     def _validate_files(self):
         if not self.excel_file.exists():

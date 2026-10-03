@@ -22,7 +22,8 @@ class Controller:
         year,
         quarter,
         weekday,
-        sheet_name="EN&WH"
+        sheet_name="EN&WH",
+        progress=None
     ):
 
         self.template = template_path
@@ -34,10 +35,18 @@ class Controller:
         self.weekday = weekday
         self.sheet_name = sheet_name
 
+        self.progress = progress
+
         self.logger = Logger()
 
         # "Equipment Name - Equipment No." entries with 6Y maintenance due
         self.six_year_due = []
+
+    def _report(self, current, total, message):
+
+        if self.progress:
+
+            self.progress(current, total, message)
 
     # ==========================================================
     # Main
@@ -81,7 +90,17 @@ class Controller:
             # Generate Log Cards
             # --------------------------------------------------
 
-            for _, row in equipment.iterrows():
+            total = len(equipment)
+
+            self._report(0, total, "Reading equipment...")
+
+            for position, (_, row) in enumerate(equipment.iterrows(), start=1):
+
+                self._report(
+                    position - 1,
+                    total,
+                    f"Processing {row['Equipment No.']} ({position}/{total})"
+                )
 
                 schedule = ScheduleHelper(
 
@@ -169,11 +188,15 @@ class Controller:
 
                 return False
 
+            self._report(total, total, "Saving document...")
+
             composer.save(
 
                 self.output
 
             )
+
+            self._report(total, total, "Done")
 
             self.logger.info(
 

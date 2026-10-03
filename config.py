@@ -57,6 +57,8 @@ EQUIPMENT_FILE = DATA_DIR / "Equipment.xlsx"
 
 WORD_TEMPLATE = TEMPLATES_DIR / "Template_Log_Card.docx"
 
+DUE_TEMPLATE = TEMPLATES_DIR / "Maintenance Due Template.docx"
+
 LOGO_FILE = ASSETS_DIR / "renata.png"
 
 # Future Database

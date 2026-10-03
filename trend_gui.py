@@ -17,22 +17,17 @@ from PIL import Image, ImageTk
 
 from config import DEFAULT_TREND_NAME, OUTPUT_DIR
 from trend_controller import TrendController
+from ui_common import ProgressPanel, ProgressTracker, px
 
 
 class TrendWindow:
 
-    def __init__(self, dashboard=None):
+    def __init__(self, root, on_back):
 
-        self.dashboard = dashboard
-
-        if dashboard is None:
-            self.root = tk.Tk()
-        else:
-            self.root = tk.Toplevel(dashboard)
-
-        self.root.title("RPGF Trend Report Generator v2.0")
-        self.root.geometry("920x650")
-        self.root.resizable(False, False)
+        self.root = root
+        self.on_back = on_back
+        self.page = tk.Frame(root, bg="#F4F7FB")
+        self.page.pack(fill="both", expand=True)
 
         self.settings_file = "settings.json"
 
@@ -42,14 +37,6 @@ class TrendWindow:
         self.configure_styles()
         self.build_ui()
         self.load_settings()
-
-        self.root.protocol(
-            "WM_DELETE_WINDOW",
-            self.on_close
-        )
-
-        if dashboard is None:
-            self.root.mainloop()
 
     def resource_path(self, relative_path):
 
@@ -68,7 +55,7 @@ class TrendWindow:
             )
 
             image = image.resize(
-                (70, 70),
+                (px(70), px(70)),
                 Image.LANCZOS
             )
 
@@ -133,17 +120,16 @@ class TrendWindow:
             self.output_path.set(str(OUTPUT_DIR / DEFAULT_TREND_NAME))
 
     def build_ui(self):
-        self.root.configure(bg="#F4F7FB")
-        main = tk.Frame(self.root, bg="#F4F7FB")
+        main = tk.Frame(self.page, bg="#F4F7FB")
         main.pack(fill="both", expand=True)
 
-        header = tk.Frame(main, bg="#123B5D", height=132)
+        header = tk.Frame(main, bg="#123B5D", height=px(132))
         header.pack(fill="x")
         header.pack_propagate(False)
         if self.logo:
-            tk.Label(header, image=self.logo, bg="#123B5D").place(x=40, y=28)
+            tk.Label(header, image=self.logo, bg="#123B5D").place(x=px(40), y=px(28))
         tk.Label(header, text="Trend Report Generator", bg="#123B5D", fg="white",
-                 font=("Segoe UI", 22, "bold")).place(x=135, y=33)
+                 font=("Segoe UI", 22, "bold")).place(x=px(135), y=px(33))
 
         content = tk.Frame(main, bg="#F4F7FB")
         content.pack(fill="both", expand=True, padx=42, pady=24)
@@ -181,20 +167,13 @@ class TrendWindow:
                   activebackground="#E3EAF0", relief="flat", cursor="hand2", font=("Segoe UI", 10),
                   padx=12, pady=10).pack(side="right")
 
-        status_card = tk.Frame(content, bg="#EAF3F8", highlightbackground="#D2E4EE", highlightthickness=1)
-        status_card.pack(fill="x", pady=(18, 0))
-        self.progress = ttk.Progressbar(status_card, mode="indeterminate", length=180, style="Trend.Horizontal.TProgressbar")
-        self.progress.pack(side="right", padx=16, pady=13)
-        tk.Label(status_card, textvariable=self.status, bg="#EAF3F8", fg="#34536B",
-                 font=("Segoe UI", 10)).pack(side="left", padx=16, pady=13)
+        self.progress = ProgressPanel(content, self.root, self.status)
+        self.progress.pack(fill="x", pady=(18, 0))
 
     def configure_styles(self):
         style = ttk.Style(self.root)
-        style.theme_use("clam")
         style.configure("Trend.TEntry", padding=8, fieldbackground="white", bordercolor="#B8C6D1")
         style.configure("Trend.TCombobox", padding=7, fieldbackground="white", bordercolor="#B8C6D1")
-        style.configure("Trend.Horizontal.TProgressbar", troughcolor="#D7E8F1", background="#167D9A",
-                        bordercolor="#D7E8F1", lightcolor="#167D9A", darkcolor="#167D9A")
 
     def create_path_field(self, parent, row, label, variable, command):
         tk.Label(parent, text=label, bg="white", fg="#263847", font=("Segoe UI", 10, "bold")).grid(
@@ -241,14 +220,15 @@ class TrendWindow:
 
         self.save_settings()
         self.status.set("Generating trend report...")
-        self.progress.start()
+        self.tracker = ProgressTracker()
+        self.progress.start(self.tracker)
         threading.Thread(target=self.generate, daemon=True).start()
 
     def generate(self):
         try:
             output = TrendController(
                 self.excel_path.get(), self.output_path.get(), self.year.get(),
-                self.half.get(), self.weekday.get()
+                self.half.get(), self.weekday.get(), progress=self.tracker.update
             ).generate()
         except Exception as error:
             self.root.after(0, self.generation_failed, str(error))
@@ -261,7 +241,7 @@ class TrendWindow:
         messagebox.showinfo("Trend Report", f"Trend report saved to:\n{output}")
 
     def generation_failed(self, error):
-        self.progress.stop()
+        self.progress.stop(complete=False)
         self.status.set("Trend report generation failed.")
         messagebox.showerror("Trend Report", error)
 
@@ -269,20 +249,6 @@ class TrendWindow:
 
         self.save_settings()
 
-        self.root.destroy()
+        self.page.destroy()
 
-        if self.dashboard:
-            self.dashboard.deiconify()
-
-    def on_close(self):
-
-        self.save_settings()
-
-        self.root.destroy()
-
-        if self.dashboard:
-            self.dashboard.deiconify()
-
-
-if __name__ == "__main__":
-    TrendWindow()
+        self.on_back()

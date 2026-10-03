@@ -19,6 +19,7 @@ from PIL import Image
 from PIL import ImageTk
 
 from controller import Controller
+from ui_common import ProgressPanel, ProgressTracker, px
 
 
 class MainWindow:
@@ -27,25 +28,15 @@ class MainWindow:
     # Constructor
     # ==========================================================
 
-    def __init__(self, dashboard=None):
+    def __init__(self, root, on_back):
 
-        self.dashboard = dashboard
+        self.root = root
 
-        if dashboard is None:
+        self.on_back = on_back
 
-            self.root = tk.Tk()
+        self.page = tk.Frame(root, bg="#F4F7FB")
 
-        else:
-
-            self.root = tk.Toplevel(dashboard)
-
-        self.root.title(
-            "RPGF Log Card Generator v2.0"
-        )
-
-        self.root.geometry("920x650")
-
-        self.root.resizable(False, False)
+        self.page.pack(fill="both", expand=True)
 
         self.settings_file = "settings.json"
 
@@ -56,15 +47,6 @@ class MainWindow:
         self.build_modern_ui()
 
         self.load_settings()
-
-        self.root.protocol(
-            "WM_DELETE_WINDOW",
-            self.on_close
-        )
-
-        if dashboard is None:
-
-            self.root.mainloop()
 
     # ==========================================================
     # Resource Path
@@ -106,7 +88,7 @@ class MainWindow:
 
             image = image.resize(
 
-                (70, 70),
+                (px(70), px(70)),
 
                 Image.LANCZOS
 
@@ -300,23 +282,21 @@ class MainWindow:
 
     def configure_styles(self):
         style = ttk.Style(self.root)
-        style.theme_use("clam")
         style.configure("Suite.TEntry", padding=8, fieldbackground="white", bordercolor="#B8C6D1")
         style.configure("Suite.TCombobox", padding=7, fieldbackground="white", bordercolor="#B8C6D1")
         style.configure("Suite.Horizontal.TProgressbar", troughcolor="#D7E8F1", background="#167D9A",
                         bordercolor="#D7E8F1", lightcolor="#167D9A", darkcolor="#167D9A")
 
     def build_modern_ui(self):
-        self.root.configure(bg="#F4F7FB")
-        main = tk.Frame(self.root, bg="#F4F7FB")
+        main = tk.Frame(self.page, bg="#F4F7FB")
         main.pack(fill="both", expand=True)
-        header = tk.Frame(main, bg="#123B5D", height=132)
+        header = tk.Frame(main, bg="#123B5D", height=px(132))
         header.pack(fill="x")
         header.pack_propagate(False)
         if self.logo:
-            tk.Label(header, image=self.logo, bg="#123B5D").place(x=40, y=28)
+            tk.Label(header, image=self.logo, bg="#123B5D").place(x=px(40), y=px(28))
         tk.Label(header, text="Log Card Generator", bg="#123B5D", fg="white",
-                 font=("Segoe UI", 22, "bold")).place(x=135, y=45)
+                 font=("Segoe UI", 22, "bold")).place(x=px(135), y=px(45))
 
         content = tk.Frame(main, bg="#F4F7FB")
         content.pack(fill="both", expand=True, padx=42, pady=24)
@@ -354,12 +334,8 @@ class MainWindow:
         tk.Button(actions, text="Back to Dashboard", command=self.go_back, bg="#F4F7FB", fg="#34536B",
                   activebackground="#E3EAF0", relief="flat", cursor="hand2", font=("Segoe UI", 10),
                   padx=12, pady=10).pack(side="right")
-        status = tk.Frame(content, bg="#EAF3F8", highlightbackground="#D2E4EE", highlightthickness=1)
-        status.pack(fill="x", pady=(18, 0))
-        self.progress = ttk.Progressbar(status, mode="indeterminate", length=180, style="Suite.Horizontal.TProgressbar")
-        self.progress.pack(side="right", padx=16, pady=13)
-        tk.Label(status, textvariable=self.status, bg="#EAF3F8", fg="#34536B", font=("Segoe UI", 10)).pack(
-            side="left", padx=16, pady=13)
+        self.progress = ProgressPanel(content, self.root, self.status)
+        self.progress.pack(fill="x", pady=(18, 0))
 
     def create_path_field(self, parent, row, label, variable, command):
         tk.Label(parent, text=label, bg="white", fg="#263847", font=("Segoe UI", 10, "bold")).grid(
@@ -507,7 +483,9 @@ class MainWindow:
 
         )
 
-        self.progress.start(10)
+        self.tracker = ProgressTracker()
+
+        self.progress.start(self.tracker)
 
         self.status.set(
 
@@ -545,7 +523,9 @@ class MainWindow:
 
                 weekday=self.weekday.get(),
 
-                sheet_name=self.sheet_name.get()
+                sheet_name=self.sheet_name.get(),
+
+                progress=self.tracker.update
 
             )
 
@@ -577,7 +557,7 @@ class MainWindow:
 
     def finish_generation(self, success, six_year_due=()):
 
-        self.progress.stop()
+        self.progress.stop(complete=bool(success))
 
         self.generate_button.config(
 
@@ -635,7 +615,7 @@ class MainWindow:
 
     def show_error(self, message):
 
-        self.progress.stop()
+        self.progress.stop(complete=False)
 
         self.generate_button.config(
 
@@ -656,7 +636,7 @@ class MainWindow:
             message
 
         )
-            # ==========================================================
+    # ==========================================================
     # Back to Dashboard
     # ==========================================================
 
@@ -664,74 +644,6 @@ class MainWindow:
 
         self.save_settings()
 
-        self.root.destroy()
+        self.page.destroy()
 
-        if self.dashboard is not None:
-
-            self.dashboard.deiconify()
-
-    # ==========================================================
-    # Window Close
-    # ==========================================================
-
-    def on_close(self):
-
-        self.save_settings()
-
-        self.root.destroy()
-
-        if self.dashboard is not None:
-
-            try:
-
-                self.dashboard.destroy()
-
-            except Exception:
-
-                pass
-
-    # ==========================================================
-    # Update Status
-    # ==========================================================
-
-    def set_status(self, message):
-
-        self.status.set(message)
-
-        self.root.update_idletasks()
-
-    # ==========================================================
-    # Enable / Disable Generate Button
-    # ==========================================================
-
-    def enable_generate(self):
-
-        self.generate_button.config(
-
-            state="normal"
-
-        )
-
-    def disable_generate(self):
-
-        self.generate_button.config(
-
-            state="disabled"
-
-        )
-
-    # ==========================================================
-    # Start Progress Bar
-    # ==========================================================
-
-    def start_progress(self):
-
-        self.progress.start(10)
-
-    # ==========================================================
-    # Stop Progress Bar
-    # ==========================================================
-
-    def stop_progress(self):
-
-        self.progress.stop()
+        self.on_back()
