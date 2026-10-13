@@ -10,6 +10,7 @@ from PIL import Image, ImageTk
 
 from due_gui import DueWindow
 from logcard_gui import MainWindow
+from schedule_gui import ScheduleWindow
 from trend_gui import TrendWindow
 from ui_common import enable_high_dpi, init_scaling, px, set_app_icon
 
@@ -84,7 +85,7 @@ class Dashboard:
 
         cards = tk.Frame(content, bg="#F4F7FB")
         cards.pack(fill="both", expand=True)
-        for column in range(2):
+        for column in range(3):
             cards.columnconfigure(column, weight=1, uniform="card")
         for row in range(2):
             cards.rowconfigure(row, weight=1, uniform="card")
@@ -92,8 +93,10 @@ class Dashboard:
                                 "Open Log Cards", self.open_logcard, "#167D9A")
         self.create_module_card(cards, 0, 1, "Trend Report Generator", "Build monthly maintenance trend reports.",
                                 "Open Trend Reports", self.open_trend, "#2D6A8E")
-        self.create_module_card(cards, 1, 0, "Maintenance Due Labels", "Print maintenance due tags for machines.",
+        self.create_module_card(cards, 0, 2, "Maintenance Due Labels", "Print maintenance due tags for machines.",
                                 "Open Due Labels", self.open_due, "#B4690E")
+        self.create_module_card(cards, 1, 0, "Maintenance Schedule", "Create the weekly schedule for the upcoming Friday.",
+                                "Open Schedule", self.open_schedule, "#3F8F5B")
         self.create_module_card(cards, 1, 1, "Log Card Responsibility", "Manage equipment ownership assignments.",
                                 "Coming Soon", self.open_responsibility, "#6D7A86")
 
@@ -109,7 +112,7 @@ class Dashboard:
         tk.Label(card, text=title, bg="white", fg="#163B56", justify="left", anchor="w",
                  font=("Segoe UI", 14, "bold")).pack(fill="x", padx=20, pady=(18, 6))
         tk.Label(card, text=description, bg="white", fg="#647482", justify="left", anchor="w",
-                 wraplength=px(330), font=("Segoe UI", 10)).pack(fill="x", padx=20)
+                 wraplength=px(240), font=("Segoe UI", 10)).pack(fill="x", padx=20)
         tk.Button(card, text=button_text, command=command, bg="#E7F0F5", fg="#1D516B",
                   activebackground="#D4E5EF", relief="flat", cursor="hand2", font=("Segoe UI", 9, "bold"),
                   padx=10, pady=8).pack(anchor="w", padx=20, pady=(14, 18))
@@ -119,6 +122,9 @@ class Dashboard:
 
     def open_trend(self):
         self.open_module(TrendWindow, "RPGF Trend Report Generator v2.0")
+
+    def open_schedule(self):
+        self.open_module(ScheduleWindow, "RPGF Maintenance Schedule v2.0")
 
     def open_due(self):
         self.open_module(DueWindow, "RPGF Maintenance Due Labels v2.0")
