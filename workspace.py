@@ -75,6 +75,55 @@ def find_files(folder):
     return result
 
 
+def inspect_workbook(path):
+    """Quick health check of the equipment workbook.
+
+    Returns {"counts": {sheet: machines}, "missing_sheets": [...],
+    "error": str or None}. Reads only the first columns, so it is fast."""
+
+    required = LOG_CARD_SHEETS + [DUE_TAG_SHEET]
+
+    result = {"counts": {}, "missing_sheets": [], "error": None}
+
+    try:
+        from openpyxl import load_workbook
+
+        book = load_workbook(path, read_only=True, data_only=True)
+
+        try:
+            for name in required:
+
+                if name not in book.sheetnames:
+                    result["missing_sheets"].append(name)
+                    continue
+
+                sheet = book[name]
+
+                column = None
+                count = 0
+
+                for row in sheet.iter_rows(values_only=True):
+
+                    if column is None:
+                        headers = [str(v).strip() if v is not None else ""
+                                   for v in row]
+                        if "Equipment No." in headers:
+                            column = headers.index("Equipment No.")
+                        continue
+
+                    if column < len(row) and row[column] not in (None, ""):
+                        count += 1
+
+                result["counts"][name] = count
+        finally:
+            book.close()
+
+    except Exception as error:
+        result["error"] = str(error)
+
+    return result
+
+
 def missing(files, *keys):
     """Human readable names of the required files that were not found."""
 

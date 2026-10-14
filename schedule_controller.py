@@ -270,8 +270,7 @@ class ScheduleController:
                     "date": scheduled,
                 })
 
-        results.sort(key=lambda item: self._sort_key(item["id"]))
-
+        # Same order as the rows in the "Due Tag" sheet.
         return results
 
     # ==================================================
@@ -486,6 +485,8 @@ class ScheduleController:
 
         table.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+             [colors.white, colors.HexColor("#E6E6E6")]),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("TOPPADDING", (0, 0), (-1, -1), 3),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 3),

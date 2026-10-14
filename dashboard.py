@@ -1,6 +1,7 @@
 """Main dashboard for RPGF Engineering Suite v2.0."""
 
 import sys
+import threading
 from pathlib import Path
 
 import tkinter as tk
@@ -41,6 +42,8 @@ class Dashboard:
     def show_home(self):
         self.root.title("RPGF Engineering Suite v2.0")
         self.home.pack(fill="both", expand=True)
+        # The workbook / templates may have been edited meanwhile.
+        self.refresh_workspace()
 
     def open_module(self, module_class, title):
         self.home.pack_forget()
@@ -63,13 +66,52 @@ class Dashboard:
 
     def refresh_workspace(self):
         files = self.workspace_files()
+        self.check_workbook(files.get("workbook"))
         for key, label in self.file_labels.items():
             found = files.get(key)
             if found:
-                label.config(text=f"\u2713  {workspace.LABELS[key]}: {found.name}", fg="#2E7D32")
+                label.config(text=f"\u2713  {found.name}", fg="#2E7D32")
             else:
-                label.config(text=f"\u2717  {workspace.LABELS[key]}: {workspace.FILE_NAMES[key]} not found",
-                             fg="#B3261E")
+                label.config(text=f"\u2717  {workspace.FILE_NAMES[key]}", fg="#B3261E")
+
+    def check_workbook(self, path):
+        """Read the workbook in the background and report its sheets."""
+        if not path:
+            self.sheet_label.config(text="", fg="#2E7D32")
+            return
+        self.sheet_label.config(text="")
+        self._check_id = getattr(self, "_check_id", 0) + 1
+        check_id = self._check_id
+        outcome = {}
+
+        def work():
+            outcome["result"] = workspace.inspect_workbook(path)
+
+        thread = threading.Thread(target=work, daemon=True)
+        thread.start()
+
+        def poll():
+            if check_id != self._check_id:
+                return  # a newer check replaced this one
+            if thread.is_alive():
+                self.root.after(80, poll)
+                return
+            self.show_workbook_report(outcome.get("result"))
+
+        self.root.after(80, poll)
+
+    def show_workbook_report(self, report):
+        if not report:
+            return
+        # Silent when the workbook is fine; only problems are shown.
+        if report["error"]:
+            self.sheet_label.config(
+                text=f"\u2717  Could not read the workbook: {report['error']}", fg="#B3261E")
+        elif report["missing_sheets"]:
+            self.sheet_label.config(
+                text=f"\u2717  Missing sheet(s): {', '.join(report['missing_sheets'])}", fg="#B3261E")
+        else:
+            self.sheet_label.config(text="")
 
     def resource_path(self, relative_path):
         try:
@@ -112,6 +154,9 @@ class Dashboard:
         tk.Button(top, text="Browse", command=self.browse_folder, bg="#E7F0F5", fg="#1D516B",
                   activebackground="#D4E5EF", relief="flat", cursor="hand2",
                   font=("Segoe UI", 9, "bold"), padx=15, pady=5).grid(row=0, column=2)
+        tk.Button(top, text="Refresh", command=self.refresh_workspace, bg="#E7F0F5", fg="#1D516B",
+                  activebackground="#D4E5EF", relief="flat", cursor="hand2",
+                  font=("Segoe UI", 9, "bold"), padx=15, pady=5).grid(row=0, column=3, padx=(8, 0))
         found = tk.Frame(box, bg="white")
         found.pack(fill="x", padx=18, pady=(0, 12))
         found.columnconfigure(0, weight=1, uniform="f")
@@ -121,6 +166,8 @@ class Dashboard:
             label = tk.Label(found, text="", bg="white", anchor="w", font=("Segoe UI", 9))
             label.grid(row=index // 2, column=index % 2, sticky="w", pady=1)
             self.file_labels[key] = label
+        self.sheet_label = tk.Label(found, text="", bg="white", anchor="w", font=("Segoe UI", 9))
+        self.sheet_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self.refresh_workspace()
 
         tk.Label(content, text="Choose a module", bg="#F4F7FB", fg="#243A4A",

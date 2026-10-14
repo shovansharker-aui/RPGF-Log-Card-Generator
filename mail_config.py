@@ -3,17 +3,16 @@ mail_config.py
 
 Default details for the weekly Maintenance Schedule email draft.
 
-These are PLACEHOLDERS. Real recipients are set in the app
-(Maintenance Schedule > Settings) or in a private mail_config_local.py,
-which is git-ignored and overrides everything below.
+Recipients are left empty on purpose: set To / CC / Subject / Body in the
+app (Maintenance Schedule > Settings). They are saved in settings.json.
 
 {date_long} is replaced with the date the mail is prepared, written like
 "06th October, 2026".
 """
 
-TO = "recipient@example.com"
+TO = ""
 
-CC = "cc.person@example.com"
+CC = ""
 
 SUBJECT = "Maintenance Work Schedule"
 
@@ -26,8 +25,3 @@ BODY = [
 # The signature saved in Outlook is inserted automatically. This is used
 # only if Outlook has no default signature.
 SIGNATURE = []
-
-try:
-    from mail_config_local import *  # noqa: F401,F403
-except ImportError:
-    pass
