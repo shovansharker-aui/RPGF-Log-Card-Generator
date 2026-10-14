@@ -8,6 +8,7 @@ RPGF Engineering Suite v2.0
 import json
 import sys
 import threading
+from datetime import date
 from pathlib import Path
 
 import tkinter as tk
@@ -15,8 +16,11 @@ from tkinter import ttk, filedialog, messagebox
 
 from PIL import Image, ImageTk
 
-from config import DUE_TEMPLATE, OUTPUT_DIR
+import workspace
+from config import OUTPUT_DIR
 from due_controller import DueController
+from mail_helper import (create_outlook_draft, default_mail_settings,
+                         get_mail_settings, save_mail_settings)
 from schedule_controller import ScheduleController, upcoming_friday
 from ui_common import ProgressPanel, ProgressTracker, px
 
@@ -27,9 +31,10 @@ UNCHECKED = "\u2610"
 
 class ScheduleWindow:
 
-    def __init__(self, root, on_back):
+    def __init__(self, root, on_back, get_files):
 
         self.root = root
+        self.get_files = get_files
         self.on_back = on_back
         self.page = tk.Frame(root, bg="#F4F7FB")
         self.page.pack(fill="both", expand=True)
@@ -43,9 +48,8 @@ class ScheduleWindow:
 
         self.rows = []
         self.checked = set()
+        self.pdf_file = None
 
-        self.excel_path = tk.StringVar()
-        self.template_path = tk.StringVar(value=str(DUE_TEMPLATE))
         self.output_dir = tk.StringVar(value=str(OUTPUT_DIR))
         self.status = tk.StringVar(value="Ready")
         self.count_text = tk.StringVar(value="")
@@ -88,9 +92,7 @@ class ScheduleWindow:
 
         data = self._read_settings()
 
-        data["sched_excel"] = self.excel_path.get()
         data["sched_output_dir"] = self.output_dir.get()
-        data["sched_tag_template"] = self.template_path.get()
 
         with open(self.settings_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
@@ -99,16 +101,8 @@ class ScheduleWindow:
 
         data = self._read_settings()
 
-        self.excel_path.set(
-            data.get("sched_excel")
-            or data.get("trend_excel")
-            or data.get("excel", ""))
-
         if data.get("sched_output_dir"):
             self.output_dir.set(data["sched_output_dir"])
-
-        if data.get("sched_tag_template"):
-            self.template_path.set(data["sched_tag_template"])
 
     # ==================================================
     # UI
@@ -139,9 +133,16 @@ class ScheduleWindow:
                      x=px(135), y=px(22))
 
         tk.Label(header,
-                 text=f"Upcoming Friday: {self.friday.strftime('%A, %d %B %Y')}",
+                 text=f"Upcoming Friday: {self.friday.strftime('%d %B %Y')}",
                  bg="#123B5D", fg="#B9D8E7",
                  font=("Segoe UI", 11)).place(x=px(137), y=px(66))
+
+        tk.Button(header, text="\u2699  Settings",
+                  command=self.open_mail_settings, bg="#1F5A85", fg="white",
+                  activebackground="#2A6FA3", activeforeground="white",
+                  relief="flat", cursor="hand2",
+                  font=("Segoe UI", 10, "bold"), padx=14, pady=6).place(
+                      relx=1.0, x=-px(24), y=px(20), anchor="ne")
 
         content = tk.Frame(self.page, bg="#F4F7FB")
         content.pack(fill="both", expand=True, padx=px(42), pady=px(18))
@@ -154,12 +155,20 @@ class ScheduleWindow:
         form.pack(fill="x", padx=24, pady=16)
         form.columnconfigure(1, weight=1)
 
-        self.path_field(form, 0, "Maintenance matrix", self.excel_path,
-                        self.browse_excel)
-        self.path_field(form, 1, "Output folder", self.output_dir,
+        files = self.get_files()
+
+        for row, key in enumerate(("workbook", "due_template")):
+            found = files.get(key)
+            tk.Label(form, bg="white", anchor="w", font=("Segoe UI", 9),
+                     fg="#2E7D32" if found else "#B3261E",
+                     text=(f"\u2713  {workspace.LABELS[key]}: {found.name}"
+                           if found else
+                           f"\u2717  {workspace.LABELS[key]}: not found in "
+                           "the workspace folder")).grid(
+                               row=row, column=0, columnspan=3, sticky="w")
+
+        self.path_field(form, 2, "Output folder", self.output_dir,
                         self.browse_output)
-        self.path_field(form, 2, "Due tag template", self.template_path,
-                        self.browse_template)
 
         actions = tk.Frame(content, bg="#F4F7FB")
         actions.pack(fill="x", pady=(14, 8))
@@ -179,6 +188,14 @@ class ScheduleWindow:
             state="disabled")
         self.tag_button.pack(side="left", padx=(10, 0))
 
+        self.mail_button = tk.Button(
+            actions, text="Create Email Draft", command=self.create_email,
+            bg="#2D6A8E", fg="white", activebackground="#245672",
+            activeforeground="white", relief="flat", cursor="hand2",
+            font=("Segoe UI", 11, "bold"), padx=25, pady=10,
+            state="disabled")
+        self.mail_button.pack(side="left", padx=(10, 0))
+
         tk.Button(actions, text="Back to Dashboard", command=self.go_back,
                   bg="#F4F7FB", fg="#34536B", activebackground="#E3EAF0",
                   relief="flat", cursor="hand2", font=("Segoe UI", 10),
@@ -187,25 +204,18 @@ class ScheduleWindow:
         toolbar = tk.Frame(content, bg="#F4F7FB")
         toolbar.pack(fill="x", pady=(0, 6))
 
-        tk.Label(toolbar, text="Tick the machines already done. Unticked "
-                 "machines get a due tag.", bg="#F4F7FB", fg="#34536B",
+        tk.Label(toolbar, text="Select to generate Due Tag",
+                 bg="#F4F7FB", fg="#34536B",
                  font=("Segoe UI", 10)).pack(side="left")
 
         tk.Label(toolbar, textvariable=self.count_text, bg="#F4F7FB",
                  fg="#123B5D", font=("Segoe UI", 10, "bold")).pack(side="right")
 
-        for text, command in (("Clear All", self.clear_all),
-                              ("Select All", self.select_all)):
-            tk.Button(toolbar, text=text, command=command, bg="#E7F0F5",
-                      fg="#1D516B", activebackground="#D4E5EF", relief="flat",
-                      cursor="hand2", font=("Segoe UI", 9, "bold"),
-                      padx=12, pady=4).pack(side="right", padx=(0, 8))
-
         table = tk.Frame(content, bg="white",
                          highlightbackground="#DCE4EC", highlightthickness=1)
         table.pack(fill="both", expand=True)
 
-        columns = ("check", "sl", "name", "id", "frequency", "date", "last")
+        columns = ("check", "sl", "name", "id", "frequency", "date")
 
         self.tree = ttk.Treeview(table, columns=columns, show="headings",
                                  style="Sched.Treeview", selectmode="browse")
@@ -215,8 +225,7 @@ class ScheduleWindow:
                     ("name", "Equipment Name", 300, "w"),
                     ("id", "Equipment ID", 170, "w"),
                     ("frequency", "Frequency", 150, "center"),
-                    ("date", "Schedule Date", 120, "center"),
-                    ("last", "Last Date", 120, "center"))
+                    ("date", "Schedule Date", 120, "center"))
 
         for key, title, width, anchor in headings:
             self.tree.heading(key, text=title)
@@ -251,24 +260,6 @@ class ScheduleWindow:
                   cursor="hand2", font=("Segoe UI", 9, "bold"),
                   padx=15, pady=5).grid(row=row, column=2, pady=5)
 
-    def browse_excel(self):
-
-        path = filedialog.askopenfilename(
-            title="Select Maintenance Matrix",
-            filetypes=[("Excel Workbook", "*.xlsx"), ("All Files", "*.*")])
-
-        if path:
-            self.excel_path.set(path)
-
-    def browse_template(self):
-
-        path = filedialog.askopenfilename(
-            title="Select Due Tag Template",
-            filetypes=[("Word Document", "*.docx"), ("All Files", "*.*")])
-
-        if path:
-            self.template_path.set(path)
-
     def browse_output(self):
 
         path = filedialog.askdirectory(title="Select Output Folder")
@@ -282,16 +273,20 @@ class ScheduleWindow:
 
     def generate(self):
 
-        if not self.excel_path.get():
-            messagebox.showerror("Maintenance Schedule",
-                                 "Please select the maintenance matrix.")
+        files = self.get_files()
+
+        if not files.get("workbook"):
+            messagebox.showerror(
+                "Maintenance Schedule",
+                "The equipment workbook was not found in the workspace "
+                "folder.\n\nChoose the folder on the dashboard.")
             return
 
         self.save_settings()
 
         output = str(
             Path(self.output_dir.get()) /
-            f"Maintenance_Schedule_{self.friday.strftime('%d-%b-%Y')}.xlsx")
+            f"Maintenance Schedule_{date.today().strftime('%d_%m_%y')}.xlsx")
 
         self.generate_button.config(state="disabled")
         self.tree.delete(*self.tree.get_children())
@@ -303,7 +298,7 @@ class ScheduleWindow:
 
         threading.Thread(
             target=self.worker,
-            args=(self.excel_path.get(), output),
+            args=(str(files["workbook"]), output),
             daemon=True).start()
 
     def worker(self, excel, output):
@@ -331,17 +326,19 @@ class ScheduleWindow:
         for index, item in enumerate(rows):
             self.tree.insert("", "end", iid=str(index), values=(
                 UNCHECKED, index + 1, item["name"], item["id"],
-                item["frequency"], item["date"].strftime("%d-%b-%Y"),
-                item["last"].strftime("%d-%b-%Y")))
+                item["frequency"], item["date"].strftime("%d-%b-%Y")))
 
+        self.pdf_file = Path(output).with_suffix(".pdf")
         self.tag_button.config(state="normal" if rows else "disabled")
+        self.mail_button.config(state="normal" if rows else "disabled")
         self.update_count()
         self.status.set("Schedule created successfully.")
 
         messagebox.showinfo(
             "Maintenance Schedule",
             f"{len(rows)} machine(s) scheduled for "
-            f"{self.friday.strftime('%d-%b-%Y')}.\n\nSaved to:\n{output}")
+            f"{self.friday.strftime('%d-%b-%Y')}.\n\nExcel:\n{output}"
+            f"\n\nPDF:\n{self.pdf_file}")
 
     # ==================================================
     # Selection
@@ -351,9 +348,18 @@ class ScheduleWindow:
 
         total = len(self.rows)
 
+        selected = [item for index, item in enumerate(self.rows)
+                    if index in self.checked]
+
+        tags = sum(len(item["items"]) for item in selected)
+
         self.count_text.set(
-            f"{total} scheduled  \u2022  {total - len(self.checked)} "
-            "will get a due tag")
+            f"{total} scheduled  \u2022  {len(selected)} selected  \u2022  "
+            f"{tags} due tags")
+
+        if self.rows:
+            self.tag_button.config(
+                state="normal" if selected else "disabled")
 
     def toggle(self, iid):
 
@@ -387,16 +393,6 @@ class ScheduleWindow:
 
         return "break"
 
-    def select_all(self):
-
-        self.checked = set(range(len(self.rows)))
-        self.refresh_checks()
-
-    def clear_all(self):
-
-        self.checked = set()
-        self.refresh_checks()
-
     def refresh_checks(self):
 
         for iid in self.tree.get_children():
@@ -406,27 +402,174 @@ class ScheduleWindow:
         self.update_count()
 
     # ==================================================
+    # Mail settings
+    # ==================================================
+
+    def open_mail_settings(self):
+
+        window = tk.Toplevel(self.root)
+        window.title("Mail Settings")
+        window.configure(bg="white")
+        window.transient(self.root)
+        window.resizable(False, False)
+
+        settings = get_mail_settings()
+
+        variables = {
+            "to": tk.StringVar(value=settings["to"]),
+            "cc": tk.StringVar(value=settings["cc"]),
+            "subject": tk.StringVar(value=settings["subject"]),
+        }
+
+        tk.Label(window, text="Email template", bg="white", fg="#123B5D",
+                 font=("Segoe UI", 14, "bold")).grid(
+                     row=0, column=0, columnspan=2, sticky="w",
+                     padx=24, pady=(20, 2))
+
+        tk.Label(window, text="Used when you click Create Email Draft. Your "
+                 "Outlook signature is added below the body automatically.",
+                 bg="white", fg="#6B7785", font=("Segoe UI", 9),
+                 wraplength=px(520), justify="left").grid(
+                     row=1, column=0, columnspan=2, sticky="w",
+                     padx=24, pady=(0, 14))
+
+        for row, (key, label) in enumerate(
+                (("to", "To"), ("cc", "CC"), ("subject", "Subject")),
+                start=2):
+
+            tk.Label(window, text=label, bg="white", fg="#263847",
+                     font=("Segoe UI", 10, "bold")).grid(
+                         row=row, column=0, sticky="nw", padx=(24, 12),
+                         pady=6)
+
+            ttk.Entry(window, textvariable=variables[key], width=62,
+                      style="Suite.TEntry").grid(
+                          row=row, column=1, sticky="ew", padx=(0, 24),
+                          pady=6, ipady=2)
+
+        tk.Label(window, text="Body", bg="white", fg="#263847",
+                 font=("Segoe UI", 10, "bold")).grid(
+                     row=5, column=0, sticky="nw", padx=(24, 12), pady=6)
+
+        body = tk.Text(window, width=62, height=6, wrap="word",
+                       font=("Segoe UI", 10), relief="solid", bd=1,
+                       padx=8, pady=6)
+        body.grid(row=5, column=1, sticky="ew", padx=(0, 24), pady=6)
+        body.insert("1.0", settings["body"])
+
+        tk.Label(window,
+                 text="Separate multiple recipients with ;   Each line of the "
+                 "body is one paragraph.   {date_long} = 14th October, 2026"
+                 "   {date} = 14-Oct-2026",
+                 bg="white", fg="#6B7785", font=("Segoe UI", 9),
+                 wraplength=px(520), justify="left").grid(
+                     row=6, column=1, sticky="w", padx=(0, 24), pady=(0, 10))
+
+        buttons = tk.Frame(window, bg="white")
+        buttons.grid(row=7, column=0, columnspan=2, sticky="ew",
+                     padx=24, pady=(6, 20))
+
+        def save():
+            save_mail_settings({
+                "to": variables["to"].get().strip(),
+                "cc": variables["cc"].get().strip(),
+                "subject": variables["subject"].get().strip(),
+                "body": body.get("1.0", "end").strip(),
+            })
+            self.status.set("Mail settings saved.")
+            window.destroy()
+
+        def reset():
+            defaults = default_mail_settings()
+            for key in variables:
+                variables[key].set(defaults[key])
+            body.delete("1.0", "end")
+            body.insert("1.0", defaults["body"])
+
+        tk.Button(buttons, text="Save", command=save, bg="#167D9A",
+                  fg="white", activebackground="#10667E",
+                  activeforeground="white", relief="flat", cursor="hand2",
+                  font=("Segoe UI", 10, "bold"), padx=22, pady=7).pack(
+                      side="left")
+
+        tk.Button(buttons, text="Cancel", command=window.destroy,
+                  bg="#E7F0F5", fg="#1D516B", activebackground="#D4E5EF",
+                  relief="flat", cursor="hand2",
+                  font=("Segoe UI", 10), padx=18, pady=7).pack(
+                      side="left", padx=(10, 0))
+
+        tk.Button(buttons, text="Reset to default", command=reset,
+                  bg="white", fg="#B3261E", activebackground="#FDECEA",
+                  relief="flat", cursor="hand2",
+                  font=("Segoe UI", 9), padx=10, pady=7).pack(side="right")
+
+        window.update_idletasks()
+
+        x = self.root.winfo_rootx() + (self.root.winfo_width()
+                                       - window.winfo_width()) // 2
+
+        # Keep the whole dialog (and its Save button) above the taskbar.
+        limit = self.root.winfo_screenheight() - px(90) - window.winfo_height()
+
+        y = min(self.root.winfo_rooty() + px(40), limit)
+
+        window.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+
+        window.grab_set()
+
+    # ==================================================
+    # Email draft
+    # ==================================================
+
+    def create_email(self):
+
+        if not self.pdf_file or not Path(self.pdf_file).exists():
+            messagebox.showerror("Maintenance Schedule",
+                                 "Generate the schedule first so the PDF "
+                                 "exists.")
+            return
+
+        try:
+            create_outlook_draft(self.pdf_file, date.today())
+        except Exception as error:
+            messagebox.showerror("Maintenance Schedule", str(error))
+            return
+
+        self.status.set("Outlook draft created.")
+
+    # ==================================================
     # Due tags
     # ==================================================
 
     def generate_tags(self):
 
+        # One tag per frequency for every ticked machine.
         selected = [
             {
                 "name": item["name"],
                 "id": item["id"],
-                "frequency": item["frequency"],
-                "date": item["date"].strftime("%d-%b-%Y"),
-                "last": item["last"].strftime("%d-%b-%Y"),
+                "frequency": entry["frequency"],
+                "date": entry["date"].strftime("%d-%b-%Y"),
+                "last": entry["last"].strftime("%d-%b-%Y"),
             }
             for index, item in enumerate(self.rows)
-            if index not in self.checked
+            if index in self.checked
+            for entry in item["items"]
         ]
 
         if not selected:
             messagebox.showinfo("Maintenance Schedule",
-                                "Every machine is ticked, so there is "
-                                "nothing to tag.")
+                                "Select at least one machine to generate "
+                                "due tags.")
+            return
+
+        files = self.get_files()
+
+        if not files.get("due_template"):
+            messagebox.showerror(
+                "Maintenance Schedule",
+                "The due tag template was not found in the workspace "
+                "folder.\n\nChoose the folder on the dashboard.")
             return
 
         self.save_settings()
@@ -444,7 +587,7 @@ class ScheduleWindow:
 
         threading.Thread(
             target=self.tag_worker,
-            args=(selected, self.template_path.get(), output),
+            args=(selected, str(files["due_template"]), output),
             daemon=True).start()
 
     def tag_worker(self, selected, template, output):

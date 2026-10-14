@@ -70,7 +70,8 @@ class TrendController:
         source = pd.ExcelFile(self.excel_file)
         sections = {"Engineering": [], "Warehouse": [], "Production": []}
         for sheet_name in source.sheet_names:
-            if sheet_name == "Settings":
+            # "Due Tag" is only used for the weekly schedule / due tags.
+            if sheet_name in ("Settings", "Due Tag"):
                 continue
             data = pd.read_excel(self.excel_file, sheet_name=sheet_name).fillna("")
             data.columns = data.columns.astype(str).str.strip()

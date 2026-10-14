@@ -16,15 +16,17 @@ from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 
 from config import DEFAULT_TREND_NAME, OUTPUT_DIR
+import workspace
 from trend_controller import TrendController
 from ui_common import ProgressPanel, ProgressTracker, px
 
 
 class TrendWindow:
 
-    def __init__(self, root, on_back):
+    def __init__(self, root, on_back, get_files):
 
         self.root = root
+        self.get_files = get_files
         self.on_back = on_back
         self.page = tk.Frame(root, bg="#F4F7FB")
         self.page.pack(fill="both", expand=True)
@@ -139,15 +141,23 @@ class TrendWindow:
         tk.Label(card, text="Report setup", bg="white", fg="#123B5D",
                  font=("Segoe UI", 14, "bold")).grid(row=0, column=0, columnspan=3,
                                                         sticky="w", padx=24, pady=(20, 3))
-        tk.Label(card, text="Select the source workbook, reporting period, and output location.",
-                 bg="white", fg="#6B7785", font=("Segoe UI", 9)).grid(
-                     row=1, column=0, columnspan=3, sticky="w", padx=24, pady=(0, 18))
+        files = self.get_files()
+        info = tk.Frame(card, bg="white")
+        info.grid(row=1, column=0, columnspan=3, sticky="w", padx=24, pady=(0, 14))
+        tk.Label(info, text="Select the reporting period and output location.", bg="white",
+                 fg="#6B7785", font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 6))
+        for key in ("workbook", "trend_template"):
+            found = files.get(key)
+            tk.Label(info, bg="white", anchor="w", font=("Segoe UI", 9),
+                     fg="#2E7D32" if found else "#B3261E",
+                     text=(f"\u2713  {workspace.LABELS[key]}: {found.name}" if found
+                           else f"\u2717  {workspace.LABELS[key]}: not found in the workspace folder")
+                     ).pack(anchor="w")
 
         form = tk.Frame(card, bg="white")
         form.grid(row=2, column=0, columnspan=3, sticky="ew", padx=24, pady=(0, 22))
         form.columnconfigure(1, weight=1)
-        self.create_path_field(form, 0, "Equipment workbook", self.excel_path, self.browse_excel)
-        self.create_path_field(form, 1, "Output workbook", self.output_path, self.browse_output)
+        self.create_path_field(form, 0, "Output workbook", self.output_path, self.browse_output)
 
         settings = tk.Frame(card, bg="white")
         settings.grid(row=3, column=0, columnspan=3, sticky="ew", padx=24, pady=(0, 24))
@@ -211,9 +221,14 @@ class TrendWindow:
             self.output_path.set(file_path)
 
     def start_generation(self):
-        if not self.excel_path.get():
-            messagebox.showerror("Trend Report", "Please select the Equipment workbook.")
+        files = self.get_files()
+        absent = workspace.missing(files, "workbook", "trend_template")
+        if absent:
+            messagebox.showerror("Trend Report", "Not found in the workspace folder:\n\n"
+                                 + "\n".join(absent) + "\n\nChoose the folder on the dashboard.")
             return
+        self.excel_path.set(str(files["workbook"]))
+        self.template_file = str(files["trend_template"])
         if not self.output_path.get():
             messagebox.showerror("Trend Report", "Please select an output workbook.")
             return
@@ -228,7 +243,8 @@ class TrendWindow:
         try:
             output = TrendController(
                 self.excel_path.get(), self.output_path.get(), self.year.get(),
-                self.half.get(), self.weekday.get(), progress=self.tracker.update
+                self.half.get(), self.weekday.get(), template_file=self.template_file,
+                progress=self.tracker.update
             ).generate()
         except Exception as error:
             self.root.after(0, self.generation_failed, str(error))

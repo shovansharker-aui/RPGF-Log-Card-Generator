@@ -18,6 +18,7 @@ from tkinter import messagebox
 from PIL import Image
 from PIL import ImageTk
 
+import workspace
 from controller import Controller
 from ui_common import ProgressPanel, ProgressTracker, px
 
@@ -28,9 +29,11 @@ class MainWindow:
     # Constructor
     # ==========================================================
 
-    def __init__(self, root, on_back):
+    def __init__(self, root, on_back, get_files):
 
         self.root = root
+
+        self.get_files = get_files
 
         self.on_back = on_back
 
@@ -304,15 +307,22 @@ class MainWindow:
         card.pack(fill="x")
         tk.Label(card, text="Generation setup", bg="white", fg="#123B5D", font=("Segoe UI", 14, "bold")).pack(
             anchor="w", padx=24, pady=(20, 3))
-        tk.Label(card, text="Choose the equipment data, log-card template, and reporting period.", bg="white",
-                 fg="#6B7785", font=("Segoe UI", 9)).pack(anchor="w", padx=24, pady=(0, 14))
+        files = self.get_files()
+        tk.Label(card, text="Choose the output file and reporting period.", bg="white",
+                 fg="#6B7785", font=("Segoe UI", 9)).pack(anchor="w", padx=24, pady=(0, 6))
+        for key in ("workbook", "log_template"):
+            found = files.get(key)
+            tk.Label(card, bg="white", anchor="w", font=("Segoe UI", 9),
+                     fg="#2E7D32" if found else "#B3261E",
+                     text=(f"\u2713  {workspace.LABELS[key]}: {found.name}" if found
+                           else f"\u2717  {workspace.LABELS[key]}: not found in the workspace folder")
+                     ).pack(anchor="w", padx=24)
+        tk.Frame(card, bg="white", height=10).pack()
 
         form = tk.Frame(card, bg="white")
         form.pack(fill="x", padx=24)
         form.columnconfigure(1, weight=1)
-        self.create_path_field(form, 0, "Equipment workbook", self.excel_path, self.browse_excel)
-        self.create_path_field(form, 1, "Word template", self.template_path, self.browse_template)
-        self.create_path_field(form, 2, "Output document", self.output_path, self.browse_output)
+        self.create_path_field(form, 0, "Output document", self.output_path, self.browse_output)
 
         choices = tk.Frame(card, bg="white")
         choices.pack(fill="x", padx=24, pady=(12, 24))
@@ -427,29 +437,29 @@ class MainWindow:
 
     def validate(self):
 
-        if not self.excel_path.get():
+        files = self.get_files()
+
+        absent = workspace.missing(files, "workbook", "log_template")
+
+        if absent:
 
             messagebox.showerror(
 
                 "Missing File",
 
-                "Please select Equipment Excel."
+                "Not found in the workspace folder:\n\n"
+
+                + "\n".join(absent)
+
+                + "\n\nChoose the folder on the dashboard."
 
             )
 
             return False
 
-        if not self.template_path.get():
+        self.excel_path.set(str(files["workbook"]))
 
-            messagebox.showerror(
-
-                "Missing File",
-
-                "Please select Word Template."
-
-            )
-
-            return False
+        self.template_path.set(str(files["log_template"]))
 
         if not self.output_path.get():
 

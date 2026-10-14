@@ -7,6 +7,7 @@ the upcoming Friday, based on the maintenance matrix workbook.
 
 import calendar
 import re
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -19,10 +20,14 @@ MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
 
 FRIDAY = 4
 
+DUE_TAG_SHEET = "Due Tag"
+
 # A date counts as "this Friday" when it is within this many days of it.
 WINDOW_DAYS = 3
 
-# Last allowable date = scheduled date + this many days.
+# Last allowable date = scheduled date + days for the frequency.
+# Frequencies not listed (W, 2Y, 6Y) use GRACE_DAYS.
+LAST_DATE_DAYS = {"M": 4, "3M": 7, "6M": 15, "Y": 30}
 GRACE_DAYS = 3
 
 # Order frequencies are written in the output.
@@ -32,7 +37,7 @@ FREQUENCY_ORDER = ["W", "M", "3M", "6M", "Y", "2Y", "6Y"]
 LONG_INTERVALS = {"2Y": 2, "6Y": 6}
 
 HEADERS = ["Sl No", "Equipment Name", "Equipment ID", "Frequency",
-           "Schedule Date", "Last Date"]
+           "Schedule Date"]
 
 
 def upcoming_friday(today=None):
@@ -51,6 +56,7 @@ class ScheduleController:
         self.output_file = Path(output_file)
         self.friday = friday or upcoming_friday()
         self.progress = progress
+        self.pdf_file = None
 
     def _report(self, current, total, message):
 
@@ -185,9 +191,10 @@ class ScheduleController:
 
                     break
 
-        frequencies.sort(key=FREQUENCY_ORDER.index)
+        pairs = sorted(zip(frequencies, dates),
+                       key=lambda pair: FREQUENCY_ORDER.index(pair[0]))
 
-        return frequencies, dates
+        return [f for f, _ in pairs], [d for _, d in pairs]
 
     # ==================================================
     # Load / build
@@ -209,7 +216,13 @@ class ScheduleController:
 
         workbook = pd.ExcelFile(self.excel_file)
 
-        sheets = [name for name in workbook.sheet_names if name != "Settings"]
+        # The schedule is built from the workbook's "Due Tag" sheet only.
+        if DUE_TAG_SHEET not in workbook.sheet_names:
+            raise ValueError(
+                f"The workbook has no '{DUE_TAG_SHEET}' sheet.\n"
+                f"Sheets found: {', '.join(workbook.sheet_names)}")
+
+        sheets = [DUE_TAG_SHEET]
 
         results = []
 
@@ -241,12 +254,20 @@ class ScheduleController:
 
                 scheduled = min(dates)
 
+                # One entry per frequency, used for the due tags.
+                items = [
+                    {"frequency": frequency, "date": when,
+                     "last": when + timedelta(
+                         days=LAST_DATE_DAYS.get(frequency, GRACE_DAYS))}
+                    for frequency, when in zip(frequencies, dates)
+                ]
+
                 results.append({
+                    "items": items,
                     "name": str(row.get("Equipment Name", "")).strip(),
                     "id": equipment_id,
                     "frequency": ", ".join(frequencies),
                     "date": scheduled,
-                    "last": scheduled + timedelta(days=GRACE_DAYS),
                 })
 
         results.sort(key=lambda item: self._sort_key(item["id"]))
@@ -278,9 +299,9 @@ class ScheduleController:
         for number, item in enumerate(rows, start=1):
 
             sheet.append([number, item["name"], item["id"],
-                          item["frequency"], item["date"], item["last"]])
+                          item["frequency"], item["date"]])
 
-        widths = [8, 46, 26, 20, 16, 16]
+        widths = [8, 46, 26, 20, 16]
 
         for column, width in enumerate(widths, start=1):
 
@@ -297,7 +318,7 @@ class ScheduleController:
                     horizontal="left" if cell.column in (2, 3) else "center",
                     vertical="center", wrap_text=True)
 
-                if cell.row > 1 and cell.column in (5, 6):
+                if cell.row > 1 and cell.column == 5:
 
                     cell.number_format = "DD-MMM-YYYY"
 
@@ -313,6 +334,165 @@ class ScheduleController:
 
         workbook.save(self.output_file)
 
+        self.pdf_file = self.output_file.with_suffix(".pdf")
+
+        self._report(98, 100, "Creating PDF...")
+
+        self.write_pdf(rows, self.pdf_file)
+
         self._report(100, 100, "Done")
 
         return rows
+
+    # ==================================================
+    # PDF
+    # ==================================================
+
+    def week_title(self):
+        """'Schedule for 3rd Week of October,2026' for the Friday's week."""
+
+        week = (self.friday.day - 1) // 7 + 1
+
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(week, "th")
+
+        return (f"Schedule for {week}{suffix} Week of "
+                f"{self.friday.strftime('%B')},{self.friday.year}")
+
+    def write_pdf(self, rows, pdf_file):
+
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.pdfgen import canvas as pdf_canvas
+        from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer,
+                                        Table, TableStyle)
+
+        logo_path = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) /             "assets" / "header_logo.png"
+
+        page_width, page_height = A4
+
+        # Geometry taken from the company header document (twips -> points).
+        table_width = 9351 / 20
+        split_x = 1780 / 20
+        row1_height = 907 / 20
+        row2_height = 485 / 20
+        left = (page_width - table_width) / 2
+        top = page_height - 12.7 * mm
+
+        def draw_header(canvas, _document):
+
+            canvas.saveState()
+
+            bottom = top - row1_height - row2_height
+
+            canvas.setLineWidth(0.6)
+            canvas.setStrokeColor(colors.black)
+            canvas.rect(left, bottom, table_width, row1_height + row2_height)
+            canvas.line(left, top - row1_height,
+                        left + table_width, top - row1_height)
+            canvas.line(left + split_x, top, left + split_x, bottom)
+
+            if logo_path.exists():
+                canvas.drawImage(
+                    str(logo_path), left + 14.75, top - 4.25 - 35.7,
+                    width=36.07, height=35.69, mask="auto")
+
+            right = left + table_width - 5.4
+
+            canvas.setFillColor(colors.black)
+            canvas.setFont("Times-Bold", 16)
+            canvas.drawRightString(right, top - 15, "RENATA PLC")
+            canvas.setFont("Times-Bold", 12)
+            canvas.drawRightString(right, top - 29.5,
+                                   "Rajendrapur General Facility")
+            canvas.setFont("Times-Roman", 10)
+            canvas.drawRightString(
+                right, top - 41.5,
+                "Noyapara, Bhawal Mirzapur, Rajendrapur, Gazipur-1700, "
+                "Bangladesh")
+
+            middle = top - row1_height - row2_height / 2
+
+            canvas.setFont("Times-Bold", 14)
+            canvas.drawString(left + 5.4, middle - 5, "Doc. Title:")
+            canvas.setFont("Times-Bold", 15)
+            canvas.drawCentredString(
+                left + split_x + (table_width - split_x) / 2, middle - 5.5,
+                "Preventive Maintenance Schedule")
+
+            canvas.restoreState()
+
+        class NumberedCanvas(pdf_canvas.Canvas):
+            """Two-pass canvas so the footer can say 'Page X of Y'."""
+
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._pages = []
+
+            def showPage(self):
+                self._pages.append(dict(self.__dict__))
+                self._startPage()
+
+            def save(self):
+                total = len(self._pages)
+                for state in self._pages:
+                    self.__dict__.update(state)
+                    self.setFont("Times-Bold", 12)
+                    self.drawCentredString(
+                        page_width / 2, 12.7 * mm,
+                        f"Page {self._pageNumber} of {total}")
+                    super().showPage()
+                super().save()
+
+        cell = ParagraphStyle("cell", fontName="Times-Roman", fontSize=10,
+                              leading=12)
+
+        head = ParagraphStyle("head", parent=cell, fontName="Times-Bold",
+                              textColor=colors.black, alignment=1)
+
+        centered = ParagraphStyle("centered", parent=cell, alignment=1)
+
+        document = SimpleDocTemplate(
+            str(pdf_file), pagesize=A4,
+            leftMargin=left, rightMargin=left,
+            topMargin=41 * mm, bottomMargin=22 * mm,
+            title="Maintenance Schedule", author="RPGF Engineering")
+
+        story = [
+            Paragraph(
+                self.week_title(),
+                ParagraphStyle("sub", parent=cell, fontName="Times-Bold",
+                               fontSize=12, leading=15, alignment=1)),
+            Spacer(1, 2 * mm),
+        ]
+
+        data = [[Paragraph(text, head) for text in HEADERS]]
+
+        for number, item in enumerate(rows, start=1):
+
+            data.append([
+                Paragraph(str(number), centered),
+                Paragraph(item["name"], cell),
+                Paragraph(item["id"], cell),
+                Paragraph(item["frequency"], centered),
+                Paragraph(item["date"].strftime("%d-%b-%Y"), centered),
+            ])
+
+        # Same width as the header table (165 mm).
+        table = Table(
+            data, repeatRows=1,
+            colWidths=[14 * mm, 58 * mm, 36 * mm, 30 * mm, 27 * mm])
+
+        table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+
+        story.append(table)
+
+        document.build(
+            story, onFirstPage=draw_header, onLaterPages=draw_header,
+            canvasmaker=NumberedCanvas)

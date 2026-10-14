@@ -3,3 +3,5 @@ docxcompose
 pandas
 openpyxl
 Pillow
+reportlab
+pywin32

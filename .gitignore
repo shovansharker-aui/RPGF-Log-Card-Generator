@@ -14,3 +14,6 @@ templates/*
 !templates/Template_Log_Card.docx
 !templates/Template_Trend_Analysis.xlsx
 !templates/Maintenance Due Template.docx
+
+# Private mail recipients (this PC only)
+mail_config_local.py

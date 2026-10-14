@@ -52,5 +52,5 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: RPGF-Engineering-Suite-Windows
-          path: "dist/RPGF Engineering Suite.exe"
+          path: "dist/RPGF Engineering Suite"
           if-no-files-found: error

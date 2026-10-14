@@ -24,7 +24,10 @@ def enable_high_dpi():
 
 
 def set_app_icon(root, icon_path):
-    """Replace Tk's default feather icon with the Renata logo."""
+    """Replace Tk's default feather icon with the Renata logo.
+
+    icon_path is the .ico; the matching .png beside it is used for the
+    window itself (iconphoto sets the taskbar/title icon reliably)."""
 
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
@@ -34,9 +37,27 @@ def set_app_icon(root, icon_path):
         pass
 
     try:
-        root.iconbitmap(default=icon_path)
+        from pathlib import Path
+
+        from PIL import Image, ImageTk
+
+        source = Image.open(Path(icon_path).with_name("renata.png"))
+
+        source = source.convert("RGBA")
+
+        # Kept on the root so the images are not garbage collected.
+        root._app_icons = [
+            ImageTk.PhotoImage(source.resize((size, size), Image.LANCZOS))
+            for size in (256, 64, 48, 32, 16)
+        ]
+
+        # default=True: also used for dialogs and other windows.
+        root.iconphoto(True, *root._app_icons)
     except Exception:
-        pass
+        try:
+            root.iconbitmap(icon_path)
+        except Exception:
+            pass
 
 
 def init_scaling(root):
