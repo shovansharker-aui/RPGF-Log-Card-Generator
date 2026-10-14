@@ -16,6 +16,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from PIL import Image, ImageTk
 
+import schedule_store
 import workspace
 from config import OUTPUT_DIR
 from due_controller import DueController
@@ -49,6 +50,9 @@ class ScheduleWindow:
         self.rows = []
         self.checked = set()
         self.pdf_file = None
+        self.excel_file = None
+        self.header_text = tk.StringVar(
+            value=f"Upcoming Friday: {self.friday.strftime('%d %B %Y')}")
 
         self.output_dir = tk.StringVar(value=str(OUTPUT_DIR))
         self.status = tk.StringVar(value="Ready")
@@ -56,6 +60,7 @@ class ScheduleWindow:
 
         self.build_ui()
         self.load_settings()
+        self.restore_last()
 
     # ==================================================
     # Resources / settings
@@ -133,7 +138,7 @@ class ScheduleWindow:
                      x=px(135), y=px(22))
 
         tk.Label(header,
-                 text=f"Upcoming Friday: {self.friday.strftime('%d %B %Y')}",
+                 textvariable=self.header_text,
                  bg="#123B5D", fg="#B9D8E7",
                  font=("Segoe UI", 11)).place(x=px(137), y=px(66))
 
@@ -220,6 +225,10 @@ class ScheduleWindow:
         self.tree = ttk.Treeview(table, columns=columns, show="headings",
                                  style="Sched.Treeview", selectmode="browse")
 
+        # Alternate row colours so a row is easy to follow across the list.
+        self.tree.tag_configure("odd", background="#FFFFFF")
+        self.tree.tag_configure("even", background="#E8EFF6")
+
         headings = (("check", "", 44, "center"),
                     ("sl", "Sl No", 60, "center"),
                     ("name", "Equipment Name", 300, "w"),
@@ -284,6 +293,12 @@ class ScheduleWindow:
 
         self.save_settings()
 
+        # A restored schedule may be from last week: always aim at the
+        # upcoming Friday of today.
+        self.friday = upcoming_friday()
+        self.header_text.set(
+            f"Upcoming Friday: {self.friday.strftime('%d %B %Y')}")
+
         output = str(
             Path(self.output_dir.get()) /
             f"Maintenance Schedule_{date.today().strftime('%d_%m_%y')}.xlsx")
@@ -326,12 +341,15 @@ class ScheduleWindow:
         for index, item in enumerate(rows):
             self.tree.insert("", "end", iid=str(index), values=(
                 UNCHECKED, index + 1, item["name"], item["id"],
-                item["frequency"], item["date"].strftime("%d-%b-%Y")))
+                item["frequency"], item["date"].strftime("%d-%b-%Y")),
+                tags=("even" if index % 2 else "odd",))
 
         self.pdf_file = Path(output).with_suffix(".pdf")
+        self.excel_file = Path(output)
         self.tag_button.config(state="normal" if rows else "disabled")
         self.mail_button.config(state="normal" if rows else "disabled")
         self.update_count()
+        self.save_state()
         self.status.set("Schedule created successfully.")
 
         messagebox.showinfo(
@@ -339,6 +357,55 @@ class ScheduleWindow:
             f"{len(rows)} machine(s) scheduled for "
             f"{self.friday.strftime('%d-%b-%Y')}.\n\nExcel:\n{output}"
             f"\n\nPDF:\n{self.pdf_file}")
+
+    # ==================================================
+    # Remember the last schedule
+    # ==================================================
+
+    def save_state(self):
+        """Keep the list (and ticks) for the next time the module opens."""
+
+        if not self.rows:
+            return
+
+        try:
+            schedule_store.save(self.rows, self.friday, self.pdf_file,
+                                self.excel_file, self.checked)
+        except Exception:
+            pass
+
+    def restore_last(self):
+        """Show the previously generated schedule, ticks included."""
+
+        saved = schedule_store.load()
+
+        if not saved or not saved["rows"]:
+            return
+
+        self.friday = saved["friday"]
+        self.rows = saved["rows"]
+        self.checked = saved["checked"]
+        self.pdf_file = Path(saved["pdf"]) if saved["pdf"] else None
+        self.excel_file = Path(saved["excel"]) if saved["excel"] else None
+
+        for index, item in enumerate(self.rows):
+            self.tree.insert("", "end", iid=str(index), values=(
+                CHECKED if index in self.checked else UNCHECKED,
+                index + 1, item["name"], item["id"], item["frequency"],
+                item["date"].strftime("%d-%b-%Y")),
+                tags=("even" if index % 2 else "odd",))
+
+        self.header_text.set(
+            f"Schedule for Friday, {self.friday.strftime('%d %B %Y')}"
+            f"   \u2022   generated {saved['generated'].strftime('%d-%b-%Y')}")
+
+        has_pdf = bool(self.pdf_file and self.pdf_file.exists())
+
+        self.mail_button.config(state="normal" if has_pdf else "disabled")
+
+        self.update_count()
+
+        self.status.set("Last generated schedule loaded.")
 
     # ==================================================
     # Selection
@@ -374,6 +441,7 @@ class ScheduleWindow:
                       CHECKED if index in self.checked else UNCHECKED)
 
         self.update_count()
+        self.save_state()
 
     def on_click(self, event):
 
