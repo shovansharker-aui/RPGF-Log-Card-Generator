@@ -50,7 +50,7 @@ class DueController:
 
         if isinstance(value, pd.Timestamp):
 
-            return value.strftime("%d-%b-%Y")
+            return value.strftime("%d.%m.%Y")
 
         text = str(value).strip()
 

@@ -22,12 +22,21 @@ from config import OUTPUT_DIR
 from due_controller import DueController
 from mail_helper import (create_outlook_draft, default_mail_settings,
                          get_mail_settings, save_mail_settings)
-from schedule_controller import ScheduleController, upcoming_friday
+from schedule_controller import (ScheduleController, find_latest_schedule,
+                                 fridays_in_month, read_schedule_file,
+                                 unique_dir, unique_path,
+                                 upcoming_friday)
 from ui_common import ProgressPanel, ProgressTracker, px
 
 
 CHECKED = "\u2611"
 UNCHECKED = "\u2610"
+
+MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
+               "July", "August", "September", "October", "November",
+               "December"]
+
+ORDINALS = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 5: "5th"}
 
 
 class ScheduleWindow:
@@ -42,7 +51,8 @@ class ScheduleWindow:
 
         self.settings_file = "settings.json"
 
-        # Worked out when the module opens, from the current date.
+        # The schedule currently shown; the Friday to generate is picked
+        # with the Year / Month / Friday boxes.
         self.friday = upcoming_friday()
 
         self.logo = self.load_logo()
@@ -52,15 +62,23 @@ class ScheduleWindow:
         self.pdf_file = None
         self.excel_file = None
         self.header_text = tk.StringVar(
-            value=f"Upcoming Friday: {self.friday.strftime('%d %B %Y')}")
+            value="No schedule generated yet")
+
+        target = upcoming_friday()
+        self.year_var = tk.StringVar(value=str(target.year))
+        self.month_var = tk.StringVar(value=MONTH_NAMES[target.month - 1])
+        self.friday_var = tk.StringVar()
+        self.friday_choices = {}
 
         self.output_dir = tk.StringVar(value=str(OUTPUT_DIR))
         self.status = tk.StringVar(value="Ready")
         self.count_text = tk.StringVar(value="")
+        self.file_text = tk.StringVar(value="")
 
         self.build_ui()
         self.load_settings()
-        self.restore_last()
+        self.refresh_fridays(select=target)
+        self.load_latest()
 
     # ==================================================
     # Resources / settings
@@ -175,6 +193,31 @@ class ScheduleWindow:
         self.path_field(form, 2, "Output folder", self.output_dir,
                         self.browse_output)
 
+        picker = tk.Frame(card, bg="white")
+        picker.pack(fill="x", padx=24, pady=(0, 16))
+
+        tk.Label(picker, text="Generate schedule for", bg="white",
+                 fg="#263847", font=("Segoe UI", 10, "bold")).pack(
+                     side="left", padx=(0, 14))
+
+        year_box = ttk.Combobox(
+            picker, textvariable=self.year_var, width=6, state="readonly",
+            values=[str(y) for y in range(date.today().year - 1,
+                                          date.today().year + 3)])
+        year_box.pack(side="left", padx=(0, 8))
+
+        month_box = ttk.Combobox(
+            picker, textvariable=self.month_var, width=12, state="readonly",
+            values=MONTH_NAMES)
+        month_box.pack(side="left", padx=(0, 8))
+
+        self.friday_box = ttk.Combobox(
+            picker, textvariable=self.friday_var, width=28, state="readonly")
+        self.friday_box.pack(side="left")
+
+        year_box.bind("<<ComboboxSelected>>", self.on_period_changed)
+        month_box.bind("<<ComboboxSelected>>", self.on_period_changed)
+
         actions = tk.Frame(content, bg="#F4F7FB")
         actions.pack(fill="x", pady=(14, 8))
 
@@ -212,6 +255,10 @@ class ScheduleWindow:
         tk.Label(toolbar, text="Select to generate Due Tag",
                  bg="#F4F7FB", fg="#34536B",
                  font=("Segoe UI", 10)).pack(side="left")
+
+        tk.Label(toolbar, textvariable=self.file_text, bg="#F4F7FB",
+                 fg="#6B7785", font=("Segoe UI", 9)).pack(
+                     side="left", padx=(18, 0))
 
         tk.Label(toolbar, textvariable=self.count_text, bg="#F4F7FB",
                  fg="#123B5D", font=("Segoe UI", 10, "bold")).pack(side="right")
@@ -275,6 +322,47 @@ class ScheduleWindow:
 
         if path:
             self.output_dir.set(path)
+            self.save_settings()
+            self.load_latest()
+
+    # ==================================================
+    # Month / Friday pickers
+    # ==================================================
+
+    def on_period_changed(self, _event=None):
+
+        self.refresh_fridays()
+
+    def refresh_fridays(self, select=None):
+        """Fill the Friday box with every Friday of the chosen month."""
+
+        year = int(self.year_var.get())
+        month = MONTH_NAMES.index(self.month_var.get()) + 1
+
+        self.friday_choices = {}
+
+        labels = []
+
+        for number, friday in enumerate(fridays_in_month(year, month), 1):
+            label = (f"{ORDINALS[number]} Friday  \u2013  "
+                     f"{friday.strftime('%d.%m.%Y')}")
+            self.friday_choices[label] = friday
+            labels.append(label)
+
+        self.friday_box.config(values=labels)
+
+        wanted = None
+
+        if select:
+            wanted = next((l for l, d in self.friday_choices.items()
+                           if d == select), None)
+
+        if wanted is None:
+            current = self.friday_var.get()
+            wanted = current if current in self.friday_choices else (
+                labels[0] if labels else "")
+
+        self.friday_var.set(wanted)
 
     # ==================================================
     # Generate
@@ -293,19 +381,24 @@ class ScheduleWindow:
 
         self.save_settings()
 
-        # A restored schedule may be from last week: always aim at the
-        # upcoming Friday of today.
-        self.friday = upcoming_friday()
-        self.header_text.set(
-            f"Upcoming Friday: {self.friday.strftime('%d %B %Y')}")
+        target = self.friday_choices.get(self.friday_var.get())
+
+        if target is None:
+            messagebox.showerror("Maintenance Schedule",
+                                 "Please choose the Friday to generate for.")
+            return
+
+        # Every press creates its own dated folder (e.g. 17OCT2026) holding
+        # the Excel, the PDF and the Word file; earlier ones are kept.
+        today = date.today()
+
+        folder = unique_dir(
+            Path(self.output_dir.get()) / today.strftime("%d%b%Y").upper())
 
         output = str(
-            Path(self.output_dir.get()) /
-            f"Maintenance Schedule_{date.today().strftime('%d_%m_%y')}.xlsx")
+            folder / f"Maintenance Schedule_{today.strftime('%d_%m_%y')}.xlsx")
 
         self.generate_button.config(state="disabled")
-        self.tree.delete(*self.tree.get_children())
-        self.count_text.set("")
 
         self.tracker = ProgressTracker()
         self.progress.start(self.tracker)
@@ -313,14 +406,14 @@ class ScheduleWindow:
 
         threading.Thread(
             target=self.worker,
-            args=(str(files["workbook"]), output),
+            args=(str(files["workbook"]), output, target),
             daemon=True).start()
 
-    def worker(self, excel, output):
+    def worker(self, excel, output, target):
 
         try:
             rows = ScheduleController(
-                excel, output, friday=self.friday,
+                excel, output, friday=target,
                 progress=self.tracker.update).generate()
         except Exception as error:
             message = str(error)
@@ -334,78 +427,107 @@ class ScheduleWindow:
         self.progress.stop()
         self.generate_button.config(state="normal")
 
-        self.rows = rows
-        self.checked = set()
-        self.tree.delete(*self.tree.get_children())
+        # The file just written is now the latest one: show it from there.
+        self.load_latest()
 
-        for index, item in enumerate(rows):
-            self.tree.insert("", "end", iid=str(index), values=(
-                UNCHECKED, index + 1, item["name"], item["id"],
-                item["frequency"], item["date"].strftime("%d-%b-%Y")),
-                tags=("even" if index % 2 else "odd",))
-
-        self.pdf_file = Path(output).with_suffix(".pdf")
-        self.excel_file = Path(output)
-        self.tag_button.config(state="normal" if rows else "disabled")
-        self.mail_button.config(state="normal" if rows else "disabled")
-        self.update_count()
-        self.save_state()
         self.status.set("Schedule created successfully.")
 
         messagebox.showinfo(
             "Maintenance Schedule",
             f"{len(rows)} machine(s) scheduled for "
-            f"{self.friday.strftime('%d-%b-%Y')}.\n\nExcel:\n{output}"
-            f"\n\nPDF:\n{self.pdf_file}")
+            f"{self.friday.strftime('%d.%m.%Y')}.\n\n"
+            f"Folder:\n{Path(output).parent}\n\n"
+            "Files created:\n"
+            f"  \u2022 {Path(output).name}\n"
+            f"  \u2022 {Path(output).with_suffix('.pdf').name}\n"
+            f"  \u2022 {Path(output).with_suffix('.docx').name}")
 
     # ==================================================
-    # Remember the last schedule
+    # Latest schedule file
     # ==================================================
 
-    def save_state(self):
-        """Keep the list (and ticks) for the next time the module opens."""
+    def load_latest(self, keep_ticks=False):
+        """Show the newest 'Maintenance Schedule_*.xlsx' of the output
+        folder. Ticks are kept (by Equipment ID) when asked, or restored from
+        the last session when the same file is still the latest."""
 
-        if not self.rows:
-            return
+        latest = find_latest_schedule(self.output_dir.get())
+
+        if latest is None:
+            self.rows = []
+            self.checked = set()
+            self.excel_file = None
+            self.pdf_file = None
+            self.tree.delete(*self.tree.get_children())
+            self.header_text.set("No schedule generated yet")
+            self.file_text.set("")
+            self.tag_button.config(state="disabled")
+            self.mail_button.config(state="disabled")
+            self.update_count()
+            return False
+
+        previous_ids = {
+            self.rows[index]["id"] for index in self.checked
+            if index < len(self.rows)
+        } if keep_ticks else None
 
         try:
-            schedule_store.save(self.rows, self.friday, self.pdf_file,
-                                self.excel_file, self.checked)
-        except Exception:
-            pass
+            loaded = read_schedule_file(latest)
+        except Exception as error:
+            messagebox.showerror(
+                "Maintenance Schedule",
+                f"Could not read the latest schedule:\n{latest.name}\n\n"
+                f"{error}")
+            return False
 
-    def restore_last(self):
-        """Show the previously generated schedule, ticks included."""
+        ticked = (previous_ids if previous_ids is not None
+                  else schedule_store.load_ticks(latest))
 
-        saved = schedule_store.load()
+        self.excel_file = latest
+        self.pdf_file = latest.with_suffix(".pdf")
+        self.friday = loaded["friday"]
+        self.rows = loaded["rows"]
+        self.checked = {
+            index for index, item in enumerate(self.rows)
+            if item["id"] in ticked
+        }
 
-        if not saved or not saved["rows"]:
-            return
-
-        self.friday = saved["friday"]
-        self.rows = saved["rows"]
-        self.checked = saved["checked"]
-        self.pdf_file = Path(saved["pdf"]) if saved["pdf"] else None
-        self.excel_file = Path(saved["excel"]) if saved["excel"] else None
+        self.tree.delete(*self.tree.get_children())
 
         for index, item in enumerate(self.rows):
             self.tree.insert("", "end", iid=str(index), values=(
                 CHECKED if index in self.checked else UNCHECKED,
                 index + 1, item["name"], item["id"], item["frequency"],
-                item["date"].strftime("%d-%b-%Y")),
+                item["date"].strftime("%d.%m.%Y")),
                 tags=("even" if index % 2 else "odd",))
 
         self.header_text.set(
-            f"Schedule for Friday, {self.friday.strftime('%d %B %Y')}"
-            f"   \u2022   generated {saved['generated'].strftime('%d-%b-%Y')}")
+            f"Schedule for Friday, {self.friday.strftime('%d.%m.%Y')}"
+            f"   \u2022   generated "
+            f"{loaded['generated'].strftime('%d.%m.%Y')}")
 
-        has_pdf = bool(self.pdf_file and self.pdf_file.exists())
+        self.file_text.set(f"File: {latest.name}")
 
-        self.mail_button.config(state="normal" if has_pdf else "disabled")
+        self.mail_button.config(
+            state="normal" if self.pdf_file.exists() else "disabled")
 
         self.update_count()
 
-        self.status.set("Last generated schedule loaded.")
+        return True
+
+    def save_state(self):
+        """Remember the ticks for the next time the module opens."""
+
+        if not self.excel_file:
+            return
+
+        try:
+            schedule_store.save_ticks(
+                self.excel_file,
+                {self.rows[i]["id"] for i in self.checked
+                 if i < len(self.rows)})
+        except Exception:
+            pass
 
     # ==================================================
     # Selection
@@ -611,14 +733,28 @@ class ScheduleWindow:
 
     def generate_tags(self):
 
+        previous = self.excel_file
+
+        # Always work from the latest schedule file in the output folder.
+        self.load_latest(keep_ticks=True)
+
+        if self.excel_file != previous:
+            self.status.set(f"Using the latest schedule: "
+                            f"{self.excel_file.name if self.excel_file else '-'}")
+
+        if not self.rows:
+            messagebox.showinfo("Maintenance Schedule",
+                                "No schedule found in the output folder yet.")
+            return
+
         # One tag per frequency for every ticked machine.
         selected = [
             {
                 "name": item["name"],
                 "id": item["id"],
                 "frequency": entry["frequency"],
-                "date": entry["date"].strftime("%d-%b-%Y"),
-                "last": entry["last"].strftime("%d-%b-%Y"),
+                "date": entry["date"].strftime("%d.%m.%Y"),
+                "last": entry["last"].strftime("%d.%m.%Y"),
             }
             for index, item in enumerate(self.rows)
             if index in self.checked
@@ -642,9 +778,11 @@ class ScheduleWindow:
 
         self.save_settings()
 
-        output = str(
-            Path(self.output_dir.get()) /
-            f"Maintenance_Due_Tags_{self.friday.strftime('%d-%b-%Y')}.docx")
+        # The tags go into the same dated folder as the schedule they use.
+        output = str(unique_path(
+            Path(self.excel_file).parent /
+            f"Maintenance_Due_Tags_{self.friday.strftime('%d.%m.%Y')}.docx",
+            also=()))
 
         self.generate_button.config(state="disabled")
         self.tag_button.config(state="disabled")

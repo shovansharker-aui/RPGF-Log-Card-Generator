@@ -125,7 +125,7 @@ def create_outlook_draft(pdf_file, mail_date):
     message.To = settings["to"]
     message.CC = settings["cc"]
     message.Subject = settings["subject"].replace(
-        "{date}", mail_date.strftime("%d-%b-%Y"))
+        "{date}", mail_date.strftime("%d.%m.%Y"))
 
     try:
         message.Recipients.ResolveAll()
@@ -144,7 +144,7 @@ def create_outlook_draft(pdf_file, mail_date):
              if line.strip()]
 
     body = _paragraphs(lines, date_long=long_date(mail_date),
-                       date=mail_date.strftime("%d-%b-%Y"))
+                       date=mail_date.strftime("%d.%m.%Y"))
 
     lowered = existing.lower()
 

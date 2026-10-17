@@ -8,12 +8,14 @@ the upcoming Friday, based on the maintenance matrix workbook.
 import calendar
 import re
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+from schedule_docx import write_docx
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -26,8 +28,8 @@ DUE_TAG_SHEET = "Due Tag"
 WINDOW_DAYS = 3
 
 # Last allowable date = scheduled date + days for the frequency.
-# Frequencies not listed (W, 2Y, 6Y) use GRACE_DAYS.
-LAST_DATE_DAYS = {"M": 4, "3M": 7, "6M": 15, "Y": 30}
+# Frequencies not listed (2Y, 6Y) use GRACE_DAYS.
+LAST_DATE_DAYS = {"W": 2, "M": 4, "3M": 7, "6M": 15, "Y": 30}
 GRACE_DAYS = 3
 
 # Order frequencies are written in the output.
@@ -38,6 +40,163 @@ LONG_INTERVALS = {"2Y": 2, "6Y": 6}
 
 HEADERS = ["Sl No", "Equipment Name", "Equipment ID", "Frequency",
            "Schedule Date"]
+
+
+SHEET_TITLE = "Maintenance Schedule"
+TAG_DATA_SHEET = "Tag Data"
+
+
+def unique_path(path, also=(".pdf",)):
+    """Never overwrite an earlier schedule: add (2), (3) ... when the file
+    (or its PDF twin) already exists."""
+
+    path = Path(path)
+
+    candidate = path
+
+    number = 2
+
+    while candidate.exists() or any(
+            candidate.with_suffix(extra).exists() for extra in also):
+
+        candidate = path.with_name(f"{path.stem} ({number}){path.suffix}")
+
+        number += 1
+
+    return candidate
+
+
+def unique_dir(path):
+    """A folder that does not exist yet: '17OCT2026', then '17OCT2026 (2)'."""
+
+    path = Path(path)
+
+    candidate = path
+
+    number = 2
+
+    while candidate.exists():
+
+        candidate = path.with_name(f"{path.stem} ({number})")
+
+        number += 1
+
+    return candidate
+
+
+def find_latest_schedule(folder):
+    """The most recently saved 'Maintenance Schedule_*.xlsx' in the output
+    folder or in any dated sub-folder of it (e.g. 17OCT2026)."""
+
+    folder = Path(folder)
+
+    if not folder.is_dir():
+        return None
+
+    files = [
+        path
+        for pattern in ("Maintenance Schedule_*.xlsx",
+                        "*/Maintenance Schedule_*.xlsx")
+        for path in folder.glob(pattern)
+        if not path.name.startswith("~$")
+    ]
+
+    return max(files, key=lambda path: path.stat().st_mtime) if files else None
+
+
+def fridays_in_month(year, month):
+    """Every Friday of a month, in order."""
+
+    return [
+        date(year, month, day)
+        for day in range(1, calendar.monthrange(year, month)[1] + 1)
+        if date(year, month, day).weekday() == FRIDAY
+    ]
+
+
+def _as_date(value):
+
+    if isinstance(value, datetime):
+        return value.date()
+
+    if isinstance(value, date):
+        return value
+
+    return datetime.strptime(str(value).strip()[:10], "%Y-%m-%d").date()
+
+
+def read_schedule_file(path):
+    """Load a generated schedule workbook back into the app.
+
+    Returns {"friday", "generated", "rows"}. The visible sheet is the source
+    of truth for which machines are listed (so rows removed by hand stay
+    removed); the hidden 'Tag Data' sheet supplies each frequency's own date
+    for the due tags, with a sensible fallback for older files."""
+
+    from openpyxl import load_workbook
+
+    path = Path(path)
+
+    workbook = load_workbook(path, data_only=True)
+
+    sheet = (workbook[SHEET_TITLE] if SHEET_TITLE in workbook.sheetnames
+             else workbook.worksheets[0])
+
+    per_machine = {}
+
+    if TAG_DATA_SHEET in workbook.sheetnames:
+
+        for row in workbook[TAG_DATA_SHEET].iter_rows(min_row=2,
+                                                      values_only=True):
+            if not row or not row[0]:
+                continue
+
+            frequency = str(row[1]).strip()
+            when = _as_date(row[2])
+
+            # The last date always follows the current rule, so older
+            # schedule files pick up rule changes too.
+            per_machine.setdefault(str(row[0]).strip(), []).append({
+                "frequency": frequency,
+                "date": when,
+                "last": when + timedelta(
+                    days=LAST_DATE_DAYS.get(frequency, GRACE_DAYS)),
+            })
+
+    rows = []
+
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+
+        if not row or len(row) < 5 or not row[2]:
+            continue
+
+        name, equipment_id, frequency, when = (
+            str(row[1] or "").strip(), str(row[2]).strip(),
+            str(row[3] or "").strip(), _as_date(row[4]))
+
+        items = per_machine.get(equipment_id)
+
+        if not items:
+            items = [
+                {"frequency": token.strip(), "date": when,
+                 "last": when + timedelta(
+                     days=LAST_DATE_DAYS.get(token.strip(), GRACE_DAYS))}
+                for token in frequency.split(",") if token.strip()
+            ]
+
+        rows.append({"name": name, "id": equipment_id,
+                     "frequency": frequency, "date": when, "items": items})
+
+    subject = workbook.properties.subject
+
+    try:
+        friday = _as_date(subject)
+    except Exception:
+        friday = max((row["date"] for row in rows), default=date.today())
+
+    generated = datetime.fromtimestamp(path.stat().st_mtime).date()
+
+    return {"friday": friday, "generated": generated, "rows": rows}
 
 
 def upcoming_friday(today=None):
@@ -57,6 +216,7 @@ class ScheduleController:
         self.friday = friday or upcoming_friday()
         self.progress = progress
         self.pdf_file = None
+        self.docx_file = None
 
     def _report(self, current, total, message):
 
@@ -287,7 +447,7 @@ class ScheduleController:
 
         sheet = workbook.active
 
-        sheet.title = "Maintenance Schedule"
+        sheet.title = SHEET_TITLE
 
         thin = Side(style="thin", color="000000")
 
@@ -319,7 +479,7 @@ class ScheduleController:
 
                 if cell.row > 1 and cell.column == 5:
 
-                    cell.number_format = "DD-MMM-YYYY"
+                    cell.number_format = "DD.MM.YYYY"
 
         for cell in sheet[1]:
 
@@ -331,13 +491,33 @@ class ScheduleController:
 
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
 
+        # Hidden sheet: each frequency's own date, used for the due tags.
+        data = workbook.create_sheet(TAG_DATA_SHEET)
+        data.append(["Equipment ID", "Frequency", "Date", "Last Date"])
+        for item in rows:
+            for entry in item["items"]:
+                data.append([item["id"], entry["frequency"],
+                             entry["date"].isoformat(),
+                             entry["last"].isoformat()])
+        data.sheet_state = "hidden"
+
+        workbook.properties.subject = self.friday.isoformat()
+        workbook.properties.title = "Maintenance Schedule"
+        workbook.active = 0
+
         workbook.save(self.output_file)
 
         self.pdf_file = self.output_file.with_suffix(".pdf")
 
-        self._report(98, 100, "Creating PDF...")
+        self._report(97, 100, "Creating PDF...")
 
         self.write_pdf(rows, self.pdf_file)
+
+        self._report(99, 100, "Creating Word file...")
+
+        self.docx_file = self.output_file.with_suffix(".docx")
+
+        write_docx(rows, self.docx_file, self.week_title())
 
         self._report(100, 100, "Done")
 
@@ -475,7 +655,7 @@ class ScheduleController:
                 Paragraph(item["name"], cell),
                 Paragraph(item["id"], cell),
                 Paragraph(item["frequency"], centered),
-                Paragraph(item["date"].strftime("%d-%b-%Y"), centered),
+                Paragraph(item["date"].strftime("%d.%m.%Y"), centered),
             ])
 
         # Same width as the header table (165 mm).

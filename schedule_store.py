@@ -1,8 +1,11 @@
 """
 schedule_store.py
 
-Remembers the last generated weekly schedule (and which machines were
-ticked) so it is still there when the app or the module is opened again.
+Remembers which machines were ticked in the schedule list, so the ticks are
+still there when the app or the module is opened again.
+
+The schedule itself is not stored here: it is read from the latest
+"Maintenance Schedule_*.xlsx" in the output folder.
 
 Stored in the user's profile, not next to the exe, so rebuilding or
 replacing the app folder never loses it.
@@ -10,7 +13,6 @@ replacing the app folder never loses it.
 
 import json
 import os
-from datetime import date, datetime
 from pathlib import Path
 
 
@@ -22,40 +24,15 @@ def store_file():
 
     folder.mkdir(parents=True, exist_ok=True)
 
-    return folder / "last_schedule.json"
+    return folder / "ticked_machines.json"
 
 
-def _iso(value):
-
-    return value.isoformat()
-
-
-def save(rows, friday, pdf_file, excel_file, checked, generated=None):
+def save_ticks(excel_file, equipment_ids):
+    """Remember the ticked Equipment IDs for this schedule file."""
 
     data = {
-        "version": 1,
-        "friday": _iso(friday),
-        "generated": _iso(generated or date.today()),
-        "pdf": str(pdf_file) if pdf_file else "",
         "excel": str(excel_file) if excel_file else "",
-        "checked": sorted(checked),
-        "rows": [
-            {
-                "name": row["name"],
-                "id": row["id"],
-                "frequency": row["frequency"],
-                "date": _iso(row["date"]),
-                "items": [
-                    {
-                        "frequency": item["frequency"],
-                        "date": _iso(item["date"]),
-                        "last": _iso(item["last"]),
-                    }
-                    for item in row["items"]
-                ],
-            }
-            for row in rows
-        ],
+        "ids": sorted(equipment_ids),
     }
 
     target = store_file()
@@ -67,41 +44,16 @@ def save(rows, friday, pdf_file, excel_file, checked, generated=None):
     temp.replace(target)
 
 
-def load():
-    """Returns the saved schedule or None when there is none / unreadable."""
+def load_ticks(excel_file):
+    """Ticked Equipment IDs saved for this exact schedule file, else empty."""
 
     try:
         data = json.loads(store_file().read_text(encoding="utf-8"))
 
-        rows = [
-            {
-                "name": row["name"],
-                "id": row["id"],
-                "frequency": row["frequency"],
-                "date": date.fromisoformat(row["date"]),
-                "items": [
-                    {
-                        "frequency": item["frequency"],
-                        "date": date.fromisoformat(item["date"]),
-                        "last": date.fromisoformat(item["last"]),
-                    }
-                    for item in row["items"]
-                ],
-            }
-            for row in data["rows"]
-        ]
-
-        return {
-            "friday": date.fromisoformat(data["friday"]),
-            "generated": date.fromisoformat(data["generated"]),
-            "pdf": data.get("pdf", ""),
-            "excel": data.get("excel", ""),
-            "checked": {
-                index for index in data.get("checked", [])
-                if isinstance(index, int) and 0 <= index < len(rows)
-            },
-            "rows": rows,
-        }
+        if str(excel_file) == data.get("excel"):
+            return set(data.get("ids", []))
 
     except Exception:
-        return None
+        pass
+
+    return set()
