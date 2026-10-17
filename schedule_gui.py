@@ -453,7 +453,7 @@ class ScheduleWindow:
             "Files created:\n"
             f"  \u2022 {Path(output).name}\n"
             f"  \u2022 {Path(output).with_suffix('.pdf').name}\n"
-            f"  \u2022 {Path(output).with_suffix('.docx').name}")
+            f"  \u2022 {Path(output).name.replace('Maintenance Schedule', 'Maintenance Schedule Checklist', 1).replace('.xlsx', '.pdf')}")
 
     # ==================================================
     # Latest schedule file

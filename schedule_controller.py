@@ -15,7 +15,6 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-from schedule_docx import write_docx
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -216,7 +215,7 @@ class ScheduleController:
         self.friday = friday or upcoming_friday()
         self.progress = progress
         self.pdf_file = None
-        self.docx_file = None
+        self.checklist_file = None
 
     def _report(self, current, total, message):
 
@@ -513,11 +512,16 @@ class ScheduleController:
 
         self.write_pdf(rows, self.pdf_file)
 
-        self._report(99, 100, "Creating Word file...")
+        self._report(99, 100, "Creating checklist PDF...")
 
-        self.docx_file = self.output_file.with_suffix(".docx")
+        # "Maintenance Schedule_17_10_26.xlsx" ->
+        # "Maintenance Schedule Checklist_17_10_26.pdf"
+        self.checklist_file = self.output_file.with_name(
+            self.output_file.stem.replace(
+                "Maintenance Schedule", "Maintenance Schedule Checklist", 1)
+            + ".pdf")
 
-        write_docx(rows, self.docx_file, self.week_title())
+        self.write_pdf(rows, self.checklist_file, checklist=True)
 
         self._report(100, 100, "Done")
 
@@ -537,15 +541,74 @@ class ScheduleController:
         return (f"Schedule for {week}{suffix} Week of "
                 f"{self.friday.strftime('%B')},{self.friday.year}")
 
-    def write_pdf(self, rows, pdf_file):
+    def write_pdf(self, rows, pdf_file, checklist=False):
+        """The schedule as a PDF. With checklist=True the title is
+        'Maintenance Schedule Checklist' and every frequency has a tick box
+        beside it (for ticking by pen)."""
+
+        doc_title = ("Maintenance Schedule Checklist" if checklist
+                     else "Preventive Maintenance Schedule")
 
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.units import mm
+        from reportlab.pdfbase.pdfmetrics import stringWidth
         from reportlab.pdfgen import canvas as pdf_canvas
-        from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer,
-                                        Table, TableStyle)
+        from reportlab.platypus import (Flowable, Paragraph,
+                                        SimpleDocTemplate, Spacer, Table,
+                                        TableStyle)
+
+        class TickBoxes(Flowable):
+            """'W [ ], M [ ]': each frequency followed by an empty box, laid
+            out centred and wrapped inside the cell."""
+
+            FONT, SIZE, BOX, LEAD = "Times-Roman", 10, 7.5, 13
+
+            def __init__(self, names):
+                super().__init__()
+                self.names = names
+                self.lines = []
+
+            def wrap(self, available, _height):
+                self.available = available
+                atoms = []
+                for index, name in enumerate(self.names):
+                    comma = "," if index < len(self.names) - 1 else ""
+                    width = (stringWidth(name, self.FONT, self.SIZE) + 3
+                             + self.BOX + stringWidth(comma, self.FONT,
+                                                       self.SIZE))
+                    atoms.append((name, comma, width))
+                self.lines, line, used = [], [], 0
+                for atom in atoms:
+                    needed = atom[2] + (5 if line else 0)
+                    if line and used + needed > available:
+                        self.lines.append(line)
+                        line, used = [], 0
+                        needed = atom[2]
+                    line.append(atom)
+                    used += needed
+                if line:
+                    self.lines.append(line)
+                self.height = len(self.lines) * self.LEAD
+                return available, self.height
+
+            def draw(self):
+                canvas = self.canv
+                y = self.height - 10
+                for line in self.lines:
+                    total = sum(a[2] for a in line) + 5 * (len(line) - 1)
+                    x = (self.available - total) / 2
+                    for name, comma, width in line:
+                        canvas.setFont(self.FONT, self.SIZE)
+                        canvas.drawString(x, y, name)
+                        x += stringWidth(name, self.FONT, self.SIZE) + 3
+                        canvas.setLineWidth(0.7)
+                        canvas.rect(x, y - 0.6, self.BOX, self.BOX)
+                        x += self.BOX
+                        canvas.drawString(x, y, comma)
+                        x += stringWidth(comma, self.FONT, self.SIZE) + 5
+                    y -= self.LEAD
 
         logo_path = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) /             "assets" / "header_logo.png"
 
@@ -598,7 +661,7 @@ class ScheduleController:
             canvas.setFont("Times-Bold", 15)
             canvas.drawCentredString(
                 left + split_x + (table_width - split_x) / 2, middle - 5.5,
-                "Preventive Maintenance Schedule")
+                doc_title)
 
             canvas.restoreState()
 
@@ -636,7 +699,7 @@ class ScheduleController:
             str(pdf_file), pagesize=A4,
             leftMargin=left, rightMargin=left,
             topMargin=41 * mm, bottomMargin=22 * mm,
-            title="Maintenance Schedule", author="RPGF Engineering")
+            title=doc_title, author="RPGF Engineering")
 
         story = [
             Paragraph(
@@ -654,14 +717,18 @@ class ScheduleController:
                 Paragraph(str(number), centered),
                 Paragraph(item["name"], cell),
                 Paragraph(item["id"], cell),
-                Paragraph(item["frequency"], centered),
+                (TickBoxes([part.strip() for part in
+                            item["frequency"].split(",") if part.strip()])
+                 if checklist else Paragraph(item["frequency"], centered)),
                 Paragraph(item["date"].strftime("%d.%m.%Y"), centered),
             ])
 
         # Same width as the header table (165 mm).
+        widths = ([14, 50, 34, 40, 27] if checklist
+                  else [14, 58, 36, 30, 27])
+
         table = Table(
-            data, repeatRows=1,
-            colWidths=[14 * mm, 58 * mm, 36 * mm, 30 * mm, 27 * mm])
+            data, repeatRows=1, colWidths=[w * mm for w in widths])
 
         table.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
