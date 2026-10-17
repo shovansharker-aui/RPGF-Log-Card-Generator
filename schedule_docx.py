@@ -113,7 +113,10 @@ def _field(paragraph, instruction, size=12):
             run.text = "1"
 
 
-def _build_header(section):
+DOC_TITLE = "Maintenance Schedule Checklist"
+
+
+def _build_header(section, doc_title=DOC_TITLE):
     """Company header table, repeated on every page."""
 
     header = section.header
@@ -185,7 +188,7 @@ def _build_header(section):
 
     paragraph = title_right.paragraphs[0]
     _tight(paragraph, WD_ALIGN_PARAGRAPH.CENTER)
-    _set_font(paragraph.add_run("Preventive Maintenance Schedule"), 15, True)
+    _set_font(paragraph.add_run(doc_title), 15, True)
 
     # keep the closing paragraph from adding visible height
     _set_font(holder.add_run(""), 1)
@@ -255,7 +258,7 @@ def _text_cell(cell, text, align, bold=False, size=10):
     _set_font(paragraph.add_run(text), size, bold)
 
 
-def write_docx(rows, docx_file, title):
+def write_docx(rows, docx_file, title, doc_title=DOC_TITLE):
     """Create the Word schedule. `rows` are the schedule rows (name, id,
     frequency, date); `title` is the 'Schedule for 3rd Week of ...' line."""
 
@@ -275,7 +278,7 @@ def write_docx(rows, docx_file, title):
     normal.font.name = FONT
     normal.font.size = Pt(10)
 
-    _build_header(section)
+    _build_header(section, doc_title)
     _build_footer(section)
 
     heading = document.paragraphs[0] if document.paragraphs else \
@@ -325,7 +328,7 @@ def write_docx(rows, docx_file, title):
             for cell in cells:
                 _shade(cell, SHADE)
 
-    document.core_properties.title = "Maintenance Schedule"
+    document.core_properties.title = doc_title
     document.core_properties.author = "RPGF Engineering"
 
     Path(docx_file).parent.mkdir(parents=True, exist_ok=True)

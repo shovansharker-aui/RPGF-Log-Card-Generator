@@ -24,8 +24,7 @@ from mail_helper import (create_outlook_draft, default_mail_settings,
                          get_mail_settings, save_mail_settings)
 from schedule_controller import (ScheduleController, find_latest_schedule,
                                  fridays_in_month, read_schedule_file,
-                                 unique_dir, unique_path,
-                                 upcoming_friday)
+                                 unique_path, upcoming_friday)
 from ui_common import ProgressPanel, ProgressTracker, px
 
 
@@ -388,12 +387,13 @@ class ScheduleWindow:
                                  "Please choose the Friday to generate for.")
             return
 
-        # Every press creates its own dated folder (e.g. 17OCT2026) holding
-        # the Excel, the PDF and the Word file; earlier ones are kept.
+        # One dated folder per day (e.g. 17OCT2026) holding the Excel, the
+        # PDF and the Word file. Generating again on the same day replaces
+        # those files; other days' folders are left untouched.
         today = date.today()
 
-        folder = unique_dir(
-            Path(self.output_dir.get()) / today.strftime("%d%b%Y").upper())
+        folder = Path(self.output_dir.get()) / today.strftime(
+            "%d%b%Y").upper()
 
         output = str(
             folder / f"Maintenance Schedule_{today.strftime('%d_%m_%y')}.xlsx")
@@ -415,6 +415,12 @@ class ScheduleWindow:
             rows = ScheduleController(
                 excel, output, friday=target,
                 progress=self.tracker.update).generate()
+        except PermissionError:
+            message = ("The earlier schedule files are open in another "
+                       "program (Excel, Word or a PDF viewer).\n\n"
+                       "Close them and press Generate Schedule again.")
+            self.root.after(0, lambda: self.failed(message))
+            return
         except Exception as error:
             message = str(error)
             self.root.after(0, lambda: self.failed(message))
@@ -426,6 +432,13 @@ class ScheduleWindow:
 
         self.progress.stop()
         self.generate_button.config(state="normal")
+
+        # A freshly generated schedule starts with nothing ticked, even when
+        # it replaced a file of the same name.
+        try:
+            schedule_store.save_ticks(output, set())
+        except Exception:
+            pass
 
         # The file just written is now the latest one: show it from there.
         self.load_latest()
