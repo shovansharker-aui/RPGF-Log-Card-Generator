@@ -563,7 +563,7 @@ class ScheduleController:
             """'W [ ], M [ ]': each frequency followed by an empty box, laid
             out centred and wrapped inside the cell."""
 
-            FONT, SIZE, BOX, LEAD = "Times-Roman", 10, 7.5, 13
+            FONT, SIZE, BOX, LEAD, GAP = "Times-Roman", 10, 7.5, 13, 10
 
             def __init__(self, names):
                 super().__init__()
@@ -574,14 +574,14 @@ class ScheduleController:
                 self.available = available
                 atoms = []
                 for index, name in enumerate(self.names):
-                    comma = "," if index < len(self.names) - 1 else ""
+                    comma = ""  # no separators: a gap and the boxes are enough
                     width = (stringWidth(name, self.FONT, self.SIZE) + 3
                              + self.BOX + stringWidth(comma, self.FONT,
                                                        self.SIZE))
                     atoms.append((name, comma, width))
                 self.lines, line, used = [], [], 0
                 for atom in atoms:
-                    needed = atom[2] + (5 if line else 0)
+                    needed = atom[2] + (self.GAP if line else 0)
                     if line and used + needed > available:
                         self.lines.append(line)
                         line, used = [], 0
@@ -597,7 +597,7 @@ class ScheduleController:
                 canvas = self.canv
                 y = self.height - 10
                 for line in self.lines:
-                    total = sum(a[2] for a in line) + 5 * (len(line) - 1)
+                    total = sum(a[2] for a in line) + self.GAP * (len(line) - 1)
                     x = (self.available - total) / 2
                     for name, comma, width in line:
                         canvas.setFont(self.FONT, self.SIZE)
@@ -607,7 +607,7 @@ class ScheduleController:
                         canvas.rect(x, y - 0.6, self.BOX, self.BOX)
                         x += self.BOX
                         canvas.drawString(x, y, comma)
-                        x += stringWidth(comma, self.FONT, self.SIZE) + 5
+                        x += stringWidth(comma, self.FONT, self.SIZE) + self.GAP
                     y -= self.LEAD
 
         logo_path = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) /             "assets" / "header_logo.png"
