@@ -24,7 +24,7 @@ from mail_helper import (create_outlook_draft, default_mail_settings,
                          get_mail_settings, save_mail_settings)
 from schedule_controller import (ScheduleController, find_latest_schedule,
                                  fridays_in_month, read_schedule_file,
-                                 unique_path, upcoming_friday)
+                                 upcoming_friday)
 from ui_common import ProgressPanel, ProgressTracker, px
 
 
@@ -792,10 +792,10 @@ class ScheduleWindow:
         self.save_settings()
 
         # The tags go into the same dated folder as the schedule they use.
-        output = str(unique_path(
+        # Generating again replaces the previous tag file for that Friday.
+        output = str(
             Path(self.excel_file).parent /
-            f"Maintenance_Due_Tags_{self.friday.strftime('%d.%m.%Y')}.docx",
-            also=()))
+            f"Maintenance_Due_Tags_{self.friday.strftime('%d.%m.%Y')}.docx")
 
         self.generate_button.config(state="disabled")
         self.tag_button.config(state="disabled")
@@ -814,6 +814,12 @@ class ScheduleWindow:
         try:
             DueController().generate(
                 template, selected, output, progress=self.tracker.update)
+        except PermissionError:
+            message = ("The earlier due tag file is open in another "
+                       "program (Word or a PDF viewer).\n\n"
+                       "Close it and press Generate Due Tags again.")
+            self.root.after(0, lambda: self.tags_failed(message))
+            return
         except Exception as error:
             message = str(error)
             self.root.after(0, lambda: self.tags_failed(message))
