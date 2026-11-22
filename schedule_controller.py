@@ -399,6 +399,12 @@ class ScheduleController:
                 raise ValueError(
                     f"Sheet '{sheet}' is missing: {', '.join(sorted(missing))}")
 
+            # Optional column such as "Available for Checklist??": a machine
+            # marked "No" stays in the schedule but is left off the checklist.
+            checklist_column = next(
+                (column for column in data.columns
+                 if "checklist" in str(column).lower()), None)
+
             for _, row in data.iterrows():
 
                 equipment_id = str(row["Equipment No."]).strip()
@@ -427,6 +433,10 @@ class ScheduleController:
                     "id": equipment_id,
                     "frequency": ", ".join(frequencies),
                     "date": scheduled,
+                    "checklist": not (
+                        checklist_column is not None
+                        and str(row[checklist_column]).strip().lower()
+                        == "no"),
                 })
 
         # Same order as the rows in the "Due Tag" sheet.
@@ -708,6 +718,10 @@ class ScheduleController:
                                fontSize=12, leading=15, alignment=1)),
             Spacer(1, 2 * mm),
         ]
+
+        if checklist:
+            # Machines marked "No" in the sheet are not on the checklist.
+            rows = [item for item in rows if item.get("checklist", True)]
 
         data = [[Paragraph(text, head) for text in HEADERS]]
 
